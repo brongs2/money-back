@@ -1,0 +1,56 @@
+# Python 가상환경
+.venv/
+env/
+venv/
+
+# Python 캐시/빌드
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# IDE / 편집기 설정
+.vscode/
+.idea/
+*.swp
+
+# OS 관련
+.DS_Store
+Thumbs.db
+
+# 환경 변수/비밀정보
+*.env
+.env.*
+.envrc
+
+# 데이터베이스/로컬 파일
+*.db
+*.sqlite3
+
+# 로그/런타임 파일
+*.log
+*.pid
+*.seed
+*.bak
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# mypy / type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# FastAPI/uvicorn 핫리로드 캐시
+uvicorn*.pid
+
+# PyCharm
+*.iml
+out/
