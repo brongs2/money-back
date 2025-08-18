@@ -1,16 +1,29 @@
+# app/main.py
 from fastapi import FastAPI
-from ..db.session import get_db
-from ..models.article import Article
-from ..schemas.article import ArticleCreate, ArticleOut
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
-app = FastAPI(title="News API")
+app = FastAPI(title="Money Back API")
 
-@app.on_event("startup")
-def on_startup():
-    Base.metadata.create_all(bind=engine)  # 초기 테이블 생성
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+class Item(BaseModel):
+    name: str
+    price: float
 
-app.include_router(articles_router)
+@app.get("/items")
+def get_items():
+    return [
+        {"name": "Apple", "price": 1.2},
+        {"name": "Banana", "price": 0.8},
+    ]
+
+@app.post("/items")
+def create_item(item: Item):
+    return {"message": "Item created", "item": item}
