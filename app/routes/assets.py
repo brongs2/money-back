@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 import asyncpg
 
 from app.db import get_db_connection
-from app.schemas import AssetCreate, AssetUpdate, AssetOut
+from app.schemas.schemas import AssetCreate, AssetUpdate, AssetOut
 from app.auth import get_current_user, CurrentUser  # 가정
 
 router = APIRouter(prefix="/assets", tags=["assets"])

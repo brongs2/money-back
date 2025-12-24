@@ -4,48 +4,63 @@
   <meta charset="UTF-8" />
   <title>내 자산 대시보드</title>
   <link rel="stylesheet" href="/static/style.css" />
-  <!-- 차트 쓰고 싶으면 Chart.js CDN 추가 -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
   <h1>{{ user.username }}님의 자산 대시보드</h1>
 
+  <!-- 저축 (Savings) -->
   <section>
     <h2>저축 (Savings)</h2>
     <table border="1" cellpadding="4">
       <tr>
         <th>카테고리</th>
-        <th>이름</th>
         <th>금액</th>
       </tr>
       {% for s in savings %}
       <tr>
         <td>{{ s.category }}</td>
-        <td>{{ s.name }}</td>
         <td>{{ '₩{:,.0f}'.format(s.amount) }}</td>
       </tr>
       {% endfor %}
     </table>
   </section>
 
+  <!-- 투자 (Investments) -->
   <section>
     <h2>투자 (Investments)</h2>
     <table border="1" cellpadding="4">
       <tr>
         <th>카테고리</th>
-        <th>이름</th>
         <th>금액</th>
       </tr>
       {% for i in investments %}
       <tr>
         <td>{{ i.category }}</td>
-        <td>{{ i.name }}</td>
         <td>{{ '₩{:,.0f}'.format(i.amount) }}</td>
       </tr>
       {% endfor %}
     </table>
   </section>
 
+  <!-- 자산 (Assets) -->
+  <section>
+    <h2>자산 (Assets)</h2>
+    <table border="1" cellpadding="4">
+      <tr>
+        <th>카테고리</th>
+        <th>금액</th>
+      </tr>
+      {% for i in assets %}
+      <tr>
+        <td>{{ i.category }}</td>
+        <td>{{ '₩{:,.0f}'.format(i.amount) }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </section>
+
+  <!-- 부채 (Debts) -->
   <section>
     <h2>부채 (Debts)</h2>
     <table border="1" cellpadding="4">
@@ -62,33 +77,95 @@
     </table>
   </section>
 
+  <!-- 플랜 목록 및 각 플랜에 대한 링크 -->
   <section>
-    <h2>총합 간단 그래프</h2>
-    <canvas id="summaryChart" width="400" height="200"></canvas>
-    <script>
-      // 템플릿에서 데이터 추출
-      const totalSavings = {{ savings|map(attribute='amount')|sum or 0 }};
-      const totalInvest  = {{ investments|map(attribute='amount')|sum or 0 }};
-      const totalDebt    = {{ debts|map(attribute='loan_amount')|sum or 0 }};
+    <h2>내 플랜들</h2>
+    <ul>
+      {% for plan in plans %}
+        <li>
+          <a href="/plans/{{ plan.id }}?view=html">{{ plan.title }}</a> <!-- plan.id로 상세페이지 링크 생성 -->
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+  <!-- 플랜 상세 정보 (해당 플랜 선택 시) -->
+  {% if plan %}
+  <section>
+    <h2>{{ plan.title }} 상세</h2>
 
-      const ctx = document.getElementById('summaryChart').getContext('2d');
+    <!-- 수입 -->
+    <h3>수입</h3>
+    <table border="1" cellpadding="4">
+      <tr>
+        <th>카테고리</th>
+        <th>금액</th>
+        <th>빈도</th>
+      </tr>
+      {% for revenue in revenues %}
+      <tr>
+        <td>{{ revenue.category }}</td>
+        <td>{{ '₩{:,.0f}'.format(revenue.amount) }}</td>
+        <td>{{ revenue.frequency }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+
+    <!-- 소비 -->
+    <h3>소비</h3>
+    <table border="1" cellpadding="4">
+      <tr>
+        <th>카테고리</th>
+        <th>금액</th>
+        <th>빈도</th>
+      </tr>
+      {% for expense in expenses %}
+      <tr>
+        <td>{{ expense.category }}</td>
+        <td>{{ '₩{:,.0f}'.format(expense.amount) }}</td>
+        <td>{{ expense.frequency }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+
+    <!-- 시뮬레이션 결과 -->
+    <h3>시뮬레이션 결과 (Net Worth)</h3>
+    <canvas id="simulationChart" width="400" height="200"></canvas>
+    <script>
+      const months = {{ simulation_result.points | map(attribute='month_index') | tojson }};
+      const netWorth = {{ simulation_result.points | map(attribute='net_worth') | tojson }};
+      
+      const ctx = document.getElementById('simulationChart').getContext('2d');
       new Chart(ctx, {
-        type: 'bar',
+        type: 'line',
         data: {
-          labels: ['저축', '투자', '부채'],
+          labels: months,
           datasets: [{
-            label: '금액',
-            data: [totalSavings, totalInvest, totalDebt],
+            label: '순자산 변화 (Net Worth)',
+            data: netWorth,
+            borderColor: 'rgba(75, 192, 192, 1)',
+            fill: false,
           }]
         },
         options: {
           responsive: true,
           scales: {
-            y: { beginAtZero: true }
+            x: {
+              title: {
+                display: true,
+                text: '개월'
+              }
+            },
+            y: {
+              title: {
+                display: true,
+                text: '순자산 (₩)'
+              }
+            }
           }
         }
       });
     </script>
   </section>
+  {% endif %}
 </body>
 </html>

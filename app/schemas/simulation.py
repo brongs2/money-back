@@ -1,15 +1,23 @@
+# app/schemas/simulation.py
 from pydantic import BaseModel
-from typing import Optional, Literal
+from typing import List, Optional, Dict, Any
 from datetime import date
+from app.schemas.priority import PlanPriority
+# 지연 임포트 처리: 나중에 임포트하는 방식으로 처리
 
 class SimulationRequest(BaseModel):
-    plan_id: Optional[int] = None          # 특정 플랜 기준으로 시뮬레이션 하고 싶으면
-    months: int = 60                       # 몇 개월 시뮬레이션 할지
-    extra_monthly_spend: float = 0         # 추가 소비(플랜 외)
-    savings_rate: float = 0.0              # (선택) 소득 중 몇 % 저축/투자
-    expected_saving_interest: float = 0.02 # 예: 연 2%
-    expected_invest_return: float = 0.05   # 예: 연 5%
-    expected_debt_interest_spread: float = 0.0  # (옵션) 부채 이자 조정치
+    plan_id: int
+
+    expected_saving_interest: float  # 연간(소수). 예: 0.02
+    expected_invest_return: float    # 연간(소수). 예: 0.05 (여기엔 "실질 수익률" 넣을 예정)
+    extra_monthly_spend: float
+    retirement_year: int
+    expected_death_year :int
+    savings_rate: float = 0.3  # priority 없을 때 fallback
+
+    # ✅ priority 전달
+    priority: Optional[PlanPriority] = None
+
 
 class SimulationPoint(BaseModel):
     month_index: int
@@ -17,11 +25,16 @@ class SimulationPoint(BaseModel):
     total_assets: float
     total_debts: float
     net_worth: float
-    cash_like: float      # savings + 현금성
+
+    cash_like: float
     investments: float
     others: float
 
+    # ✅ 확장용: 버킷별 잔액
+    buckets: Dict[str, float]
+
+
 class SimulationResult(BaseModel):
-    plan_id: Optional[int]
-    months: int
-    points: list[SimulationPoint]
+    plan_id: int
+    years: int
+    points: List[SimulationPoint]

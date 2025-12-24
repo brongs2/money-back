@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 import asyncpg
 
 from app.db import get_db_connection
-from app.schemas import InvestmentCreate, InvestmentUpdate, InvestmentOut
+from app.schemas.schemas import InvestmentCreate, InvestmentUpdate, InvestmentOut
 from app.auth import get_current_user, CurrentUser  # 가정
 
 router = APIRouter(prefix="/investments", tags=["investments"])
@@ -20,7 +20,6 @@ async def list_investments(
             id,
             user_id,
             category::text AS category,
-            name,
             amount,
             yield_rate,
             currency::text AS currency,
@@ -38,7 +37,6 @@ async def list_investments(
             "id": r["id"],
             "user_id": r["user_id"],
             "category": r["category"],
-            "name": r["name"],
             "amount": float(r["amount"]) if r["amount"] is not None else 0.0,
             "yield_rate": float(r["yield_rate"]) if r["yield_rate"] is not None else None,
             "currency": r["currency"],
@@ -61,7 +59,6 @@ async def insert_investment(
 
     category   = payload.category
     currency   = payload.currency
-    name       = payload.name
     amount     = payload.amount
     yield_rate = payload.yield_rate
 
@@ -69,14 +66,13 @@ async def insert_investment(
         row = await conn.fetchrow(
             """
             INSERT INTO investments
-                (user_id, category, name, amount, yield_rate, currency)
+                (user_id, category, amount, yield_rate, currency)
             VALUES
-                ($1,      $2,       $3,   COALESCE($4,0), $5,        $6)
+                ($1,      $2,       $3,   COALESCE($4,0), $5)
             RETURNING
                 id,
                 user_id,
                 category::text AS category,
-                name,
                 amount,
                 yield_rate,
                 currency::text AS currency,
@@ -85,7 +81,6 @@ async def insert_investment(
             """,
             current_user.id,
             category,
-            name,
             amount,
             yield_rate,
             currency,
@@ -95,7 +90,6 @@ async def insert_investment(
         "id": row["id"],
         "user_id": row["user_id"],
         "category": row["category"],
-        "name": row["name"],
         "amount": float(row["amount"]) if row["amount"] is not None else 0.0,
         "yield_rate": float(row["yield_rate"]) if row["yield_rate"] is not None else None,
         "currency": row["currency"],
@@ -120,7 +114,6 @@ async def update_investment(
 
     mapping = {
         "category": "category",
-        "name": "name",
         "amount": "amount",
         "yield_rate": "yield_rate",
         "currency": "currency",
@@ -147,7 +140,6 @@ async def update_investment(
             id,
             user_id,
             category::text AS category,
-            name,
             amount,
             yield_rate,
             currency::text AS currency,

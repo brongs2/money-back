@@ -2,13 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException
 import asyncpg
 
 from app.db import get_db_connection
-from app.schemas import SavingCreate, SavingUpdate, SavingOut
+from app.schemas.schemas import SavingCreate, SavingUpdate, SavingOut
 
 # 예시: 현재 유저 의존성 (실제 구현에 맞게 수정해서 쓰면 됨)
 from app.auth import get_current_user, CurrentUser  # 가정
 
 router = APIRouter(prefix="/savings", tags=["savings"])
-
 
 # ===== 목록 조회 (내 savings만) =====
 @router.get("/", response_model=list[SavingOut])
@@ -22,7 +21,6 @@ async def list_savings(
             id,
             user_id,
             category::text AS category,
-            name,
             amount,
             interest_rate,
             currency::text AS currency,
@@ -40,7 +38,6 @@ async def list_savings(
             "id": r["id"],
             "user_id": r["user_id"],
             "category": r["category"],
-            "name": r["name"],
             "amount": float(r["amount"]) if r["amount"] is not None else 0.0,
             "interest_rate": float(r["interest_rate"]) if r["interest_rate"] is not None else None,
             "currency": r["currency"],
@@ -63,7 +60,6 @@ async def insert_saving(
 
     category = payload.category
     currency = payload.currency
-    name = payload.name
     amount = payload.amount
     interest_rate = payload.interest_rate
 
@@ -71,14 +67,13 @@ async def insert_saving(
         row = await conn.fetchrow(
             """
             INSERT INTO savings
-                (user_id, category, name, amount, interest_rate, currency)
+                (user_id, category, amount, interest_rate, currency)
             VALUES
-                ($1,      $2,       $3,   COALESCE($4,0), $5,        $6)
+                ($1,      $2,       $3,   COALESCE($4,0), $5)
             RETURNING
                 id,
                 user_id,
                 category::text AS category,
-                name,
                 amount,
                 interest_rate,
                 currency::text AS currency,
@@ -87,7 +82,6 @@ async def insert_saving(
             """,
             current_user.id,
             category,
-            name,
             amount,
             interest_rate,
             currency,
@@ -97,7 +91,6 @@ async def insert_saving(
         "id": row["id"],
         "user_id": row["user_id"],
         "category": row["category"],
-        "name": row["name"],
         "amount": float(row["amount"]) if row["amount"] is not None else 0.0,
         "interest_rate": float(row["interest_rate"]) if row["interest_rate"] is not None else None,
         "currency": row["currency"],
@@ -122,7 +115,6 @@ async def update_saving(
 
     mapping = {
         "category": "category",
-        "name": "name",
         "amount": "amount",
         "interest_rate": "interest_rate",
         "currency": "currency",
@@ -150,14 +142,12 @@ async def update_saving(
             id,
             user_id,
             category::text AS category,
-            name,
             amount,
             interest_rate,
             currency::text AS currency,
             created_at,
             updated_at
     """
-
     row = await conn.fetchrow(q, *vals)
     if not row:
         raise HTTPException(status_code=404, detail="saving not found")

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>{{ plan.title }} - 플랜 상세</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+  <h1>플랜 상세</h1>
+
+  <!-- 플랜 정보 -->
+  <section>
+    <h2>{{ plan.title }}</h2>
+    {% if plan.description %}
+      <p>{{ plan.description }}</p>
+    {% endif %}
+    {% if plan.roi is not none %}
+      <p>roi: {{ plan.roi }}%</p>
+      <p>retirement_year : {{ plan.retirement_year }}</p>
+      <p>expected_death_year : {{ plan.expected_death_year }}</p>
+    {% endif %}
+  </section>
+
+  <!-- 수입 -->
+  <section>
+    <h3>수입 (Revenues)</h3>
+    <table border="1" cellpadding="4">
+      <tr>
+        <th>카테고리</th>
+        <th>금액</th>
+        <th>빈도</th>
+      </tr>
+      {% for revenue in revenues %}
+      <tr>
+        <td>{{ revenue.category }}</td>
+        <td>{{ '₩{:,.0f}'.format(revenue.amount) }}</td>
+        <td>{{ revenue.frequency }}</td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="3">수입이 없습니다.</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </section>
+
+  <!-- 소비 -->
+  <section>
+    <h3>소비 (Expenses)</h3>
+    <table border="1" cellpadding="4">
+      <tr>
+        <th>카테고리</th>
+        <th>금액</th>
+        <th>빈도</th>
+      </tr>
+      {% for expense in expenses %}
+      <tr>
+        <td>{{ expense.category }}</td>
+        <td>{{ '₩{:,.0f}'.format(expense.amount) }}</td>
+        <td>{{ expense.frequency }}</td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="3">소비 내역이 없습니다.</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </section>
+  <section>
+    <h3>우선순위 (Priority)</h3>
+    <table border="1" cellpadding="4">
+      <tr>
+        <th>카테고리</th>
+        <th>비율</th>
+      </tr>
+      {% for p in priority.allocations %}
+      <tr>
+        <td>{{ p.bucket }}</td>  <!-- bucket 이름 -->
+        <td>{{ p.weight * 100 }}%</td>  <!-- 비율을 백분율로 표시 -->
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="2">우선순위가 설정되지 않았습니다.</td>
+      </tr>
+      {% endfor %}
+    </table>
+</section>
+
+  <!-- 시뮬레이션 결과 -->
+  <section>
+    <h3>시뮬레이션 결과 (순자산 변화)</h3>
+    <canvas id="simulationChart" width="600" height="300"></canvas>
+  </section>
+
+  <script>
+    const months = {{ months | tojson }};
+    const netWorth = {{ net_worth | tojson }};
+    const ctx = document.getElementById('simulationChart').getContext('2d');
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: months,
+        datasets: [{
+          label: '순자산 변화 (Net Worth)',
+          data: netWorth,
+          borderColor: 'rgba(75, 192, 192, 1)',
+          borderWidth: 2,
+          fill: false,
+        }]
+      },
+      options: {
+        responsive: true,
+        scales: {
+          x: {
+            title: {
+              display: true,
+              text: '개월'
+            }
+          },
+          y: {
+            title: {
+              display: true,
+              text: '순자산 (₩)'
+            }
+          }
+        }
+      }
+    });
+  </script>
+
+  <p>
+    <a href="/">← 대시보드로 돌아가기</a>
+  </p>
+
+</body>
+</html>

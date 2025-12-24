@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 import asyncpg
 
 from app.db import get_db_connection
-from app.schemas import DebtCreate, DebtUpdate, DebtOut
+from app.schemas.schemas import DebtCreate, DebtUpdate, DebtOut
 from app.auth import get_current_user, CurrentUser  # 가정
 
 router = APIRouter(prefix="/debts", tags=["debts"])
