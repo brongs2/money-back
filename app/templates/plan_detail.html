@@ -17,7 +17,7 @@
       <p>{{ plan.description }}</p>
     {% endif %}
     {% if plan.roi is not none %}
-      <p>roi: {{ plan.roi }}%</p>
+      <p>roi: {{ plan.roi }}% dividend: {{ plan.dividend }}% inflation: {{ plan.inflation }}%</p>
       <p>retirement_year : {{ plan.retirement_year }}</p>
       <p>expected_death_year : {{ plan.expected_death_year }}</p>
     {% endif %}
@@ -95,41 +95,108 @@
   </section>
 
   <script>
-    const months = {{ months | tojson }};
-    const netWorth = {{ net_worth | tojson }};
+    // 1. 데이터 수신 (netCashFlow 추가)
+    const labels = {{ labels | tojson if labels is defined else '[]' }};
+    const netWorth = {{ net_worth | tojson if net_worth is defined else '[]' }};
+    const totalSavings = {{ total_savings | tojson if total_savings is defined else '[]' }};
+    const totalInvestments = {{ total_investments | tojson if total_investments is defined else '[]' }};
+    const totalDebts = {{ total_debts | tojson if total_debts is defined else '[]' }};
+    const netCashFlow = {{ net_cash_flow | tojson if net_cash_flow is defined else '[]' }}; // ✅ 추가
+
     const ctx = document.getElementById('simulationChart').getContext('2d');
+    
     new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: months,
-        datasets: [{
-          label: '순자산 변화 (Net Worth)',
-          data: netWorth,
-          borderColor: 'rgba(75, 192, 192, 1)',
-          borderWidth: 2,
-          fill: false,
-        }]
+      data: { // ✅ 콤보 차트를 위해 type을 datasets 내부로 이동
+        labels: labels,
+        datasets: [
+          {
+            type: 'line', // ✅ 순자산은 선 그래프
+            label: '순자산 (Net Worth)',
+            data: netWorth,
+            borderColor: 'rgba(75, 192, 192, 1)',
+            backgroundColor: 'rgba(75, 192, 192, 0.1)',
+            fill: true,
+            borderWidth: 3,
+            tension: 0.1,
+            pointRadius: 0, // 선을 더 깔끔하게
+            yAxisID: 'y'    // 왼쪽 Y축 사용
+          },
+          {
+            type: 'bar', // ✅ 현금 흐름은 막대 그래프
+            label: '월 현금 흐름 (Cash Flow)',
+            data: netCashFlow,
+            yAxisID: 'y1', // 오른쪽 Y축 사용
+            backgroundColor: netCashFlow.map(v => v >= 0 ? 'rgba(54, 162, 235, 0.5)' : 'rgba(255, 99, 132, 0.5)'),
+            borderColor: netCashFlow.map(v => v >= 0 ? 'rgba(54, 162, 235, 1)' : 'rgba(255, 99, 132, 1)'),
+            borderWidth: 1
+          }
+        ]
       },
       options: {
         responsive: true,
+        interaction: {
+          mode: 'index',
+          intersect: false,
+        },
+        plugins: {
+          tooltip: {
+            callbacks: {
+              title: function(context) {
+                return context[0].label + ' 상세 내역';
+              },
+              label: function(context) {
+                const index = context.dataIndex;
+                const fmt = (v) => '₩' + Math.round(v || 0).toLocaleString();
+                
+                // 툴팁에 모든 정보를 모아서 표시
+                if (context.datasetIndex === 0) { // 첫 번째 데이터셋(순자산)일 때만 합쳐서 표시
+                  return [
+                    `순자산: ${fmt(netWorth[index])}`,
+                    `현금흐름: ${fmt(netCashFlow[index])}`, // ✅ 현금흐름 추가
+                    `저축합계: ${fmt(totalSavings[index])}`,
+                    `투자합계: ${fmt(totalInvestments[index])}`,
+                    `부채합계: ${fmt(totalDebts[index])}`
+                  ];
+                }
+                return null; // 막대 그래프 툴팁 중복 방지
+              }
+            }
+          }
+        },
         scales: {
           x: {
-            title: {
-              display: true,
-              text: '개월'
+            grid: { display: false },
+            ticks: { autoSkip: true, maxTicksLimit: 12 }
+          },
+          y: { // 왼쪽 Y축 (순자산 전용)
+            type: 'linear',
+            display: true,
+            position: 'left',
+            title: { display: true, text: '순자산 규모' },
+            ticks: {
+              callback: function(value) {
+                if (value >= 100000000) return (value / 100000000).toFixed(1) + '억원';
+                if (value >= 10000) return (value / 10000).toLocaleString() + '만원';
+                return value.toLocaleString() + '원';
+              }
             }
           },
-          y: {
-            title: {
-              display: true,
-              text: '순자산 (₩)'
+          y1: { // ✅ 오른쪽 Y축 (현금 흐름 전용)
+            type: 'linear',
+            display: true,
+            position: 'right',
+            title: { display: true, text: '월 현금 흐름' },
+            grid: { drawOnChartArea: false }, // 오른쪽 축 격자는 제거하여 깔끔하게
+            ticks: {
+              callback: function(value) {
+                return (value / 10000).toLocaleString() + '만';
+              }
             }
           }
         }
       }
     });
   </script>
-
   <p>
     <a href="/">← 대시보드로 돌아가기</a>
   </p>

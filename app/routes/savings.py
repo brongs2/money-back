@@ -3,13 +3,11 @@ import asyncpg
 
 from app.db import get_db_connection
 from app.schemas.schemas import SavingCreate, SavingUpdate, SavingOut
-
-# 예시: 현재 유저 의존성 (실제 구현에 맞게 수정해서 쓰면 됨)
-from app.auth import get_current_user, CurrentUser  # 가정
+from app.auth import get_current_user, CurrentUser
 
 router = APIRouter(prefix="/savings", tags=["savings"])
 
-# ===== 목록 조회 (내 savings만) =====
+# ===== 목록 조회 =====
 @router.get("/", response_model=list[SavingOut])
 async def list_savings(
     current_user: CurrentUser = Depends(get_current_user),
@@ -23,6 +21,7 @@ async def list_savings(
             category::text AS category,
             amount,
             interest_rate,
+            compound::text AS compound,  -- ✅ 추가
             currency::text AS currency,
             created_at,
             updated_at
@@ -40,6 +39,7 @@ async def list_savings(
             "category": r["category"],
             "amount": float(r["amount"]) if r["amount"] is not None else 0.0,
             "interest_rate": float(r["interest_rate"]) if r["interest_rate"] is not None else None,
+            "compound": r["compound"],  
             "currency": r["currency"],
             "created_at": r["created_at"],
             "updated_at": r["updated_at"],
@@ -58,44 +58,36 @@ async def insert_saving(
     if payload.category is None:
         raise HTTPException(status_code=400, detail="category is required")
 
-    category = payload.category
-    currency = payload.currency
-    amount = payload.amount
-    interest_rate = payload.interest_rate
-
     async with conn.transaction():
         row = await conn.fetchrow(
             """
             INSERT INTO savings
-                (user_id, category, amount, interest_rate, currency)
+                (user_id, category, amount, interest_rate, currency, compound)
             VALUES
-                ($1,      $2,       $3,   COALESCE($4,0), $5)
+                ($1, $2, $3, COALESCE($4, 0), $5, $6) -- ✅ $6 추가
             RETURNING
                 id,
                 user_id,
                 category::text AS category,
                 amount,
                 interest_rate,
+                compound::text AS compound, -- ✅ 추가
                 currency::text AS currency,
                 created_at,
                 updated_at
             """,
             current_user.id,
-            category,
-            amount,
-            interest_rate,
-            currency,
+            payload.category,
+            payload.amount,
+            payload.interest_rate,
+            payload.currency,
+            payload.compound or 'COMPOUND' # ✅ 값이 없으면 기본값 적용
         )
 
     return {
-        "id": row["id"],
-        "user_id": row["user_id"],
-        "category": row["category"],
-        "amount": float(row["amount"]) if row["amount"] is not None else 0.0,
+        **dict(row),
+        "amount": float(row["amount"]),
         "interest_rate": float(row["interest_rate"]) if row["interest_rate"] is not None else None,
-        "currency": row["currency"],
-        "created_at": row["created_at"],
-        "updated_at": row["updated_at"],
     }
 
 
@@ -107,23 +99,24 @@ async def update_saving(
     current_user: CurrentUser = Depends(get_current_user),
     conn: asyncpg.Connection = Depends(get_db_connection),
 ):
-    # payload.items() 는 Pydantic v2 에서 바로 안 도니까, model_dump 사용
     data = payload.model_dump(exclude_unset=True)
 
     fields = []
-    vals: list = []
+    vals = []
 
+    # ✅ mapping에 compound 추가
     mapping = {
         "category": "category",
         "amount": "amount",
         "interest_rate": "interest_rate",
         "currency": "currency",
+        "compound": "compound", 
     }
 
     for k, v in data.items():
         if k in mapping:
-            # ENUM/통화 대문자 보정 (이미 Literal이면 사실 필요는 없음)
-            if k in {"category", "currency"} and v is not None:
+            # ENUM 값들은 대문자로 통일
+            if k in {"category", "currency", "compound"} and v is not None:
                 v = str(v).upper()
             fields.append(f'{mapping[k]} = ${len(vals) + 1}')
             vals.append(v)
@@ -131,7 +124,6 @@ async def update_saving(
     if not fields:
         raise HTTPException(status_code=400, detail="no updatable fields")
 
-    # user_id, saving_id 조건 추가
     vals.extend([current_user.id, saving_id])
 
     q = f"""
@@ -144,6 +136,7 @@ async def update_saving(
             category::text AS category,
             amount,
             interest_rate,
+            compound::text AS compound, -- ✅ 추가
             currency::text AS currency,
             created_at,
             updated_at
@@ -154,11 +147,9 @@ async def update_saving(
 
     return {
         **dict(row),
-        "amount": float(row["amount"]) if row["amount"] is not None else 0.0,
+        "amount": float(row["amount"]),
         "interest_rate": float(row["interest_rate"]) if row["interest_rate"] is not None else None,
     }
-
-
 # ===== 삭제 =====
 @router.delete("/{saving_id}")
 async def delete_saving(

@@ -18,7 +18,7 @@ from app.schemas.schemas import (
     TaxCreate, TaxOut, TaxUpdate,
 )
 from app.schemas.schemas import PlanPriority
-from app.schemas.simulation import SimulationRequest
+from app.schemas.simulation import SimulationRequest, SimulationDefault
 from app.simulation import run_simulation
 from app.snapshot import load_user_snapshot
 from app.auth import get_current_user, CurrentUser  # 가정
@@ -95,6 +95,8 @@ async def create_plan(
     }
 
 
+
+
 @router.get("/{plan_id}")
 async def get_plan_details(
     plan_id: int,
@@ -154,23 +156,29 @@ async def get_plan_details(
     snapshot["expenses"] = list(expenses)
 
     # 실질 수익률 계산
-    real_return = _real_return(plan["roi"], plan["dividend"], plan["inflation"])
 
     sim_req = SimulationRequest(
         plan_id=plan["id"],
-        expected_saving_interest=0.02,
-        expected_invest_return=real_return,
+        default_value=SimulationDefault(
+            default_interest=0.02,
+            default_roi=plan["roi"],
+            default_dividend=plan["dividend"],
+            inflation=plan["inflation"]
+        ),
         extra_monthly_spend=0.0,
-        savings_rate=0.3,
-        priority=plan_priority,  # PlanPriority 객체 전달
-        retirement_year = plan["retirement_year"],
-        expected_death_year =plan["expected_death_year"],
+        priority=plan_priority,
+        retirement_year=plan["retirement_year"],
+        expected_death_year=plan["expected_death_year"]
     )
     sim_result = run_simulation(snapshot, sim_req, start_date=date.today())
-
-    months = [p.month_index for p in sim_result.points]
+    labels = [p.date.strftime("%Y") for p in sim_result.points]
+    total_assets = [sum(item.amount for item in p.assets) for p in sim_result.points]
+    total_savings = [sum(item.amount for item in p.savings) for p in sim_result.points]
+    total_investments = [sum(item.amount for item in p.investments) for p in sim_result.points]
+    total_debts = [sum(item.amount for item in p.debts) for p in sim_result.points]
     net_worth = [float(p.net_worth) for p in sim_result.points]
-
+        # 차트용 데이터 추출
+    net_cash_flow = [float(p.net_cash_flow) for p in sim_result.points]
     if view == "html":
         return templates.TemplateResponse(
             "plan_detail.html",
@@ -179,9 +187,15 @@ async def get_plan_details(
                 "plan": plan,
                 "revenues": revenues,
                 "expenses": expenses,
-                "months": months,
+                "labels": labels,
                 "net_worth": net_worth,
-                "priority": plan_priority,  # priority를 템플릿에 전달
+                "net_cash_flow": net_cash_flow,
+                # ✅ HTML 템플릿에서 차트를 그리기 위해 아래 변수들이 반드시 필요합니다.
+                "total_assets": total_assets,
+                "total_savings": total_savings,
+                "total_investments": total_investments,
+                "total_debts": total_debts,
+                "priority": plan_priority,
                 "retirement_year": plan["retirement_year"],
                 "expected_death_year": plan["expected_death_year"],
             },
@@ -200,7 +214,11 @@ async def get_plan_details(
         "updated_at": plan["updated_at"],
         "revenues": list(revenues),
         "expenses": list(expenses),
-        "months": months,
+        "total_savings": total_savings,      # JSON 응답에 추가
+        "total_investments": total_investments, # JSON 응답에 추가
+        "total_debts": total_debts,          # JSON 응답에 추가
+        "total_assets": total_assets,          # JSON 응답에 추가
+        "labels": labels,
         "net_worth": net_worth,
         "retirement_year": plan["retirement_year"],
         "expected_death_year": plan["expected_death_year"],

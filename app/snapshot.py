@@ -2,22 +2,34 @@ import asyncpg
 from typing import Any
 
 async def load_user_snapshot(conn: asyncpg.Connection, user_id: int) -> dict[str, Any]:
+    # 1. 저축 (Savings): category와 compound 추가
     savings = await conn.fetch("""
-        SELECT amount::float AS amount, interest_rate::float AS interest_rate
+        SELECT 
+            category::text AS category,
+            amount::float AS amount, 
+            interest_rate::float AS interest_rate,
+            compound::text AS compound  -- ✅ 추가됨
         FROM savings
         WHERE user_id = $1
+        ORDER BY created_at DESC
     """, user_id)
 
+    # 2. 투자 (Investments): category 추가
     investments = await conn.fetch("""
-        SELECT amount::float AS amount, yield_rate::float AS yield_rate
+        SELECT 
+            category::text AS category, -- ✅ 추가됨
+            amount::float AS amount, 
+            roi::float AS roi,
+            dividend::float AS dividend
         FROM investments
         WHERE user_id = $1
+        ORDER BY created_at DESC
     """, user_id)
 
-
-    assets = await conn.fetch(
-        """
+    # 3. 고정 자산 (Assets): category 추가
+    assets = await conn.fetch("""
         SELECT
+            category::text AS category, -- ✅ 추가됨
             has_loan,
             interest_rate::float AS interest_rate,
             yield_rate::float    AS yield_rate,
@@ -27,14 +39,13 @@ async def load_user_snapshot(conn: asyncpg.Connection, user_id: int) -> dict[str
             repay_amount::float    AS repay_amount
         FROM assets
         WHERE user_id = $1
-        """,
-        user_id,
-    )
-
-    # 부채
-    debts = await conn.fetch(
-        """
+        ORDER BY created_at DESC
+    """, user_id)
+    print(assets)
+    # 4. 부채 (Debts): category 추가 및 일관성 유지
+    debts = await conn.fetch("""
         SELECT
+            category::text AS category, -- ✅ 추가됨
             loan_amount::float   AS loan_amount,
             repay_amount::float  AS repay_amount,
             interest_rate::float AS interest_rate,
@@ -44,21 +55,18 @@ async def load_user_snapshot(conn: asyncpg.Connection, user_id: int) -> dict[str
             updated_at
         FROM debts
         WHERE user_id = $1
-        """,
-        user_id,
-    )
-
+        ORDER BY created_at DESC
+    """, user_id)
 
     return {
-        "savings": savings,
-        "investments": investments,
-        "debts": debts,
-        "assets" : assets
-
-
+        "savings": list(savings),
+        "investments": list(investments),
+        "debts": list(debts),
+        "assets": list(assets)
     }
-async def load_plan_snapshot(conn, user_id: int, plan_id: int):
-    # 기본 user 재정 상태
+
+async def load_plan_snapshot(conn: asyncpg.Connection, user_id: int, plan_id: int) -> dict[str, Any]:
+    # 기본 user 재정 상태 로드
     user_snapshot = await load_user_snapshot(conn, user_id)
 
     # 플랜 수입(revenues)

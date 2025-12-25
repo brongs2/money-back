@@ -36,12 +36,14 @@ class SavingCreate(BaseModel):
     amount: float = 0
     interest_rate: Optional[float] = None
     currency: Currency = "KRW"
+    compound: Optional[str] = None # ✅ 추가
 
 class SavingUpdate(BaseModel):
     category: Optional[SavingType] = None
     amount: Optional[float] = None
     interest_rate: Optional[float] = None
     currency: Optional[Currency] = None
+    compound: Optional[str] = None # ✅ 추가
 
 class SavingOut(BaseModel):
     id: int
@@ -50,6 +52,7 @@ class SavingOut(BaseModel):
     amount: float
     interest_rate: Optional[float]
     currency: Currency
+    compound: Optional[str] = None # ✅ 추가
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
 
@@ -57,13 +60,15 @@ class SavingOut(BaseModel):
 class InvestmentCreate(BaseModel):
     category: InvestType
     amount: float = 0
-    yield_rate: Optional[float] = None
+    roi: Optional[float] = None
+    dividend: Optional[float] = None
     currency: Currency = "KRW"
 
 class InvestmentUpdate(BaseModel):
     category: Optional[InvestType] = None
     amount: Optional[float] = None
-    yield_rate: Optional[float] = None
+    roi: Optional[float] = None
+    dividend: Optional[float] = None
     currency: Optional[Currency] = None
 
 class InvestmentOut(BaseModel):
@@ -71,7 +76,8 @@ class InvestmentOut(BaseModel):
     user_id: int
     category: InvestType
     amount: float
-    yield_rate: Optional[float]
+    roi: Optional[float]
+    dividend: Optional[float]
     currency: Currency
     created_at: Optional[datetime]
     updated_at: Optional[datetime]

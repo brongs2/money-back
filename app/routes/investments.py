@@ -21,7 +21,8 @@ async def list_investments(
             user_id,
             category::text AS category,
             amount,
-            yield_rate,
+            roi,
+            dividend,
             currency::text AS currency,
             created_at,
             updated_at
@@ -38,7 +39,8 @@ async def list_investments(
             "user_id": r["user_id"],
             "category": r["category"],
             "amount": float(r["amount"]) if r["amount"] is not None else 0.0,
-            "yield_rate": float(r["yield_rate"]) if r["yield_rate"] is not None else None,
+            "roi": float(r["roi"]) if r["roi"] is not None else None,
+            "dividend": float(r["dividend"]) if r["dividend"] is not None else None,
             "currency": r["currency"],
             "created_at": r["created_at"],
             "updated_at": r["updated_at"],
@@ -60,13 +62,14 @@ async def insert_investment(
     category   = payload.category
     currency   = payload.currency
     amount     = payload.amount
-    yield_rate = payload.yield_rate
+    roi = payload.roi
+    dividend = payload.dividend
 
     async with conn.transaction():
         row = await conn.fetchrow(
             """
             INSERT INTO investments
-                (user_id, category, amount, yield_rate, currency)
+                (user_id, category, amount, roi, currency)
             VALUES
                 ($1,      $2,       $3,   COALESCE($4,0), $5)
             RETURNING
@@ -74,16 +77,18 @@ async def insert_investment(
                 user_id,
                 category::text AS category,
                 amount,
-                yield_rate,
+                roi,
                 currency::text AS currency,
+                dividend,
                 created_at,
                 updated_at
             """,
             current_user.id,
             category,
             amount,
-            yield_rate,
+            roi,
             currency,
+            dividend,
         )
 
     return {
@@ -91,7 +96,8 @@ async def insert_investment(
         "user_id": row["user_id"],
         "category": row["category"],
         "amount": float(row["amount"]) if row["amount"] is not None else 0.0,
-        "yield_rate": float(row["yield_rate"]) if row["yield_rate"] is not None else None,
+        "roi": float(row["roi"]) if row["roi"] is not None else None,
+        "dividend": float(row["dividend"]) if row["dividend"] is not None else None,
         "currency": row["currency"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -115,8 +121,9 @@ async def update_investment(
     mapping = {
         "category": "category",
         "amount": "amount",
-        "yield_rate": "yield_rate",
+        "roi": "roi",
         "currency": "currency",
+        "dividend": "dividend",
     }
 
     for k, v in data.items():
@@ -141,7 +148,8 @@ async def update_investment(
             user_id,
             category::text AS category,
             amount,
-            yield_rate,
+            roi,
+            dividend,
             currency::text AS currency,
             created_at,
             updated_at
@@ -154,7 +162,7 @@ async def update_investment(
     return {
         **dict(row),
         "amount": float(row["amount"]) if row["amount"] is not None else 0.0,
-        "yield_rate": float(row["yield_rate"]) if row["yield_rate"] is not None else None,
+        "roi": float(row["roi"]) if row["roi"] is not None else None,
     }
 
 

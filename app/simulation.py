@@ -1,196 +1,200 @@
-# app/simulation.py
 from datetime import date
 from dateutil.relativedelta import relativedelta
 from typing import List, Dict, Tuple, Optional
-from app.schemas.priority import PlanPriority
-from app.schemas.simulation import SimulationRequest, SimulationResult, SimulationPoint
+from app.schemas.simulation import SimulationRequest, SimulationResult, SimulationPoint, SimulationAsset
 
 def f(x) -> float:
+    """안전한 float 변환 헬퍼"""
     try:
         return float(x or 0.0)
     except (TypeError, ValueError):
         return 0.0
 
+def _monthly_rate(annual_rate_pct: float) -> float:
+    """연이율(%)을 월복리 이율로 변환"""
+    rate = f(annual_rate_pct) / 100.0
+    return (1.0 + rate) ** (1.0 / 12.0) - 1.0
 
-def _normalize_priority(req: SimulationRequest) -> List[Tuple[str, str, float]]:
-    """
-    반환: [(bucket_name, bucket_type, weight), ...]  (weight 합 = 1)
-    priority가 없으면 savings_rate 기반 기본값 생성.
-    """
-    if req.priority and req.priority.allocations:
-        allocs = [(a.bucket, a.type, float(a.weight)) for a in req.priority.allocations]
-        s = sum(w for _, _, w in allocs)
-        if s <= 0:
-            # fallback
-            invest = max(min(f(req.savings_rate), 1.0), 0.0)
-            return [("invest", "INVEST", invest), ("savings", "SAVINGS", 1.0 - invest)]
-        # 합이 1이 아닐 수도 있으니 안전 normalize (스키마에서 강제해도 runtime 방어)
-        return [(b, t, w / s) for b, t, w in allocs]
+class AssetTracker:
+    def __init__(self, amount: float, category: str, asset_type: str, 
+                 annual_rate: float = 0.0, dividend_rate: float = 0.0, compound: str = "COMPOUND"):
+        self.category = category
+        self.asset_type = asset_type
+        self.compound = compound
+        self.principal = amount
+        self.interest = 0.0
+        self.monthly_rate = _monthly_rate(annual_rate)
+        self.monthly_dividend_rate = _monthly_rate(dividend_rate) # ✅ 월 배당률 변환
+    def add_principal(self, amount: float):
+        self.principal += amount
 
-    invest = max(min(f(req.savings_rate), 1.0), 0.0)
-    return [("invest", "INVEST", invest), ("savings", "SAVINGS", 1.0 - invest)]
+    def subtract_total(self, amount: float):
+        if self.interest >= amount:
+            self.interest -= amount
+        else:
+            remaining = amount - self.interest
+            self.interest = 0.0
+            self.principal = max(0.0, self.principal - remaining)
 
+    def apply_growth(self):
+        if self.asset_type == "DEBT":
+            growth = self.principal * self.monthly_rate
+            self.principal += growth
+            return
 
-def _monthly_rate(annual_rate: float) -> float:
-    return (1.0 + f(annual_rate)) ** (1.0 / 12.0) - 1.0
-
+        if self.compound == "SIMPLE":
+            growth = self.principal * self.monthly_rate
+        else:
+            growth = (self.principal + self.interest) * self.monthly_rate
+        
+        self.interest += growth
+    def get_monthly_dividend(self) -> float:
+        """현재 총 자산에 대한 이번 달 배당금 계산"""
+        # 자산 가치(원금+이자)의 월 배당률만큼 현금 발생
+        return (self.principal + self.interest) * self.monthly_dividend_rate
+    def to_schema(self) -> SimulationAsset:
+        return SimulationAsset(
+            amount=round(self.principal + self.interest, 2),
+            principal=round(self.principal, 2),
+            interest=round(self.interest, 2)
+        )
 
 def run_simulation(snapshot: dict, req: SimulationRequest, start_date: date) -> SimulationResult:
-    savings_rows = snapshot.get("savings", [])
-    investment_rows = snapshot.get("investments", [])
-    asset_rows = snapshot.get("assets", [])
-    debt_rows = snapshot.get("debts", [])
+    # --- [1단계: 트래커 초기화] ---
+    
+    # 저축: 개별 이율이 없으면 req.default_value.default_interest 사용
+    saving_trackers = [
+        AssetTracker(
+            f(r["amount"]), 
+            r.get("category", "SAVINGS"), 
+            "SAVINGS", 
+            annual_rate=f(r.get("interest_rate")) or req.default_value.default_interest
+        )
+        for r in snapshot.get("savings", [])
+    ]
+    
+    # 개별 yield_rate가 있으면 우선하고, 없으면 플랜의 실질 수익률 사용
+    default_roi = f(req.default_value.default_roi) 
+    default_dividend = f(req.default_value.default_dividend)
 
-    # 초기 자산
-    total_savings = sum(f(r.get("amount")) for r in savings_rows)
-    total_invest = sum(f(r.get("amount")) for r in investment_rows)
-    total_debt = sum(f(r.get("loan_amount")) for r in debt_rows)
-    total_assets_value = sum(f(r.get("current_amount")) for r in asset_rows)
+    invest_trackers = [
+        AssetTracker(
+            f(r["amount"]), 
+            r.get("category", "INVEST"), 
+            "INVEST", 
+            annual_rate=f(r.get("roi")) or default_roi,
+            dividend_rate=f(r.get("dividend")) or default_dividend
 
-    # 버킷 잔액(확장용)
-    buckets: Dict[str, float] = {
-        "savings": total_savings,
-        "invest": total_invest,
-    }
+        )
+        for r in snapshot.get("investments", [])
+    ]
+    
+    debt_trackers = [
+        AssetTracker(
+            f(r["loan_amount"]), 
+            "DEBT", 
+            "DEBT", 
+            annual_rate=f(r.get("interest_rate")), 
+            compound=r.get("compound", "COMPOUND")
+        )
+        for r in snapshot.get("debts", [])
+    ]
+    
+    asset_trackers = [
+        AssetTracker(
+            f(r["current_amount"]), 
+            r.get("category", "ASSET"), 
+            "ASSET", 
+            annual_rate=f(r.get("yield_rate"))
+        )
+        for r in snapshot.get("assets", [])
+    ]
 
-    saving_r_month = _monthly_rate(req.expected_saving_interest)
-    invest_r_month = _monthly_rate(req.expected_invest_return)
+    # 시뮬레이션 중 발생하는 잉여금을 담을 트래커
+    extra_savings_tracker = AssetTracker(
+        amount=0.0, 
+        category="시뮬레이션 추가저축", 
+        asset_type="SAVINGS", 
+        annual_rate=req.default_value.default_interest
+    )
 
-    # 월수입(빈도 처리)
-    monthly_income = 0.0
-    for r in snapshot.get("revenues", []):
-        freq = r.get("frequency")
-        amt = f(r.get("amount"))
-        if freq == "MONTHLY":
-            monthly_income += amt
-        elif freq == "YEARLY":
-            monthly_income += amt / 12.0
-        elif freq == "WEEKLY":
-            monthly_income += amt * (52.0 / 12.0)
-        elif freq == "DAILY":
-            monthly_income += amt * 30.0
-        else:
-            monthly_income += amt
+    # --- [2단계: 월간 현금흐름 계산 함수] ---
+    def calculate_monthly(rows):
+        total = 0.0
+        for r in rows:
+            amt, freq = f(r["amount"]), r["frequency"]
+            if freq == "MONTHLY": total += amt
+            elif freq == "YEARLY": total += amt / 12.0
+            elif freq == "WEEKLY": total += amt * (52 / 12)
+            elif freq == "DAILY": total += amt * 30
+            else: total += amt
+        return total
 
-    # 월지출
-    monthly_spend = f(req.extra_monthly_spend)
-    for e in snapshot.get("expenses", []):
-        freq = e.get("frequency")
-        amt = f(e.get("amount"))
-        if freq == "MONTHLY":
-            monthly_spend += amt
-        elif freq == "YEARLY":
-            monthly_spend += amt / 12.0
-        elif freq == "WEEKLY":
-            monthly_spend += amt * (52.0 / 12.0)
-        elif freq == "DAILY":
-            monthly_spend += amt * 30.0
-        else:
-            monthly_spend += amt
+    monthly_income = calculate_monthly(snapshot.get("revenues", []))
+    monthly_spend = calculate_monthly(snapshot.get("expenses", [])) + f(req.extra_monthly_spend)
+    
+    total_repay_plan = sum(f(d["repay_amount"]) for d in snapshot.get("debts", [])) + \
+                       sum(f(a["repay_amount"]) for a in snapshot.get("assets", []) if a["has_loan"])
 
-    allocations = _normalize_priority(req)
-
-    points: List[SimulationPoint] = []
+    # --- [3단계: 시뮬레이션 루프] ---
+    points = []
     current_date = start_date
 
-    # retirement_year 이후로 revenue는 없어짐
-    retirement_year = req.retirement_year
-    expected_death_year = req.expected_death_year
+    while current_date.year <= req.expected_death_year:
+        income = monthly_income if current_date.year < req.retirement_year else 0.0
+        base_cash_flow = income - monthly_spend
+        # ✅ [추가] 모든 자산(투자, 일반자산 등)에서 발생하는 배당금 합산
+        total_dividend_cash = sum(t.get_monthly_dividend() for t in invest_trackers + asset_trackers)
+        
+        # 최종 이번 달 가용 현금
+        cash_flow = base_cash_flow + total_dividend_cash
+        
+        # --- [부채 상환 및 자산 배분 로직] ---
+        # (기존과 동일: 부채 먼저 갚고, 남으면 extra_savings에 넣고, 모자라면 자산 인출)
+        repay_needed = total_repay_plan
+        for d in debt_trackers:
+            if repay_needed <= 0 or d.principal <= 0: continue
+            payment = min(d.principal, repay_needed)
+            d.principal -= payment
+            cash_flow -= payment
+            repay_needed -= payment
 
-    # 1년 단위로 집계할 때 필요한 변수
-    year_to_data = {}
-
-    while current_date.year <= expected_death_year:
-        current_year = current_date.year
-        if current_year >= retirement_year:
-            monthly_income = 0.0  # 퇴직 이후 수입은 없으므로
-
-        # 기본 현금흐름
-        cash_flow = monthly_income - monthly_spend
-
-        # 부채 상환
-        monthly_debt_payment = sum(f(r.get("repay_amount")) for r in debt_rows)
-        total_debt = max(total_debt - monthly_debt_payment, 0.0)
-        cash_flow -= monthly_debt_payment
-
-        # cash_flow 배분 (priority에 따른 배분)
         if cash_flow >= 0:
-            for bucket_name, bucket_type, w in allocations:
-                portion = cash_flow * w
-
-                if bucket_type == "SPEND":
-                    continue  # 써버린 돈: 자산에 안 쌓임
-
-                buckets[bucket_name] = buckets.get(bucket_name, 0.0) + portion
+            extra_savings_tracker.add_principal(cash_flow)
         else:
-            # 적자 처리
             deficit = -cash_flow
-            saving_bucket_names = [b for b, t, _ in allocations if t == "SAVINGS"]
-            invest_bucket_names = [b for b, t, _ in allocations if t == "INVEST"]
-
-            for b in saving_bucket_names:
-                if deficit <= 0:
-                    break
-                available = buckets.get(b, 0.0)
+            for tracker in ([extra_savings_tracker] + saving_trackers + invest_trackers):
+                if deficit <= 0: break
+                available = tracker.principal + tracker.interest
                 take = min(available, deficit)
-                buckets[b] = available - take
+                tracker.subtract_total(take)
                 deficit -= take
 
-            for b in invest_bucket_names:
-                if deficit <= 0:
-                    break
-                available = buckets.get(b, 0.0)
-                take = min(available, deficit)
-                buckets[b] = available - take
-                deficit -= take
+        # 모든 트래커 성장 적용 (성장률에는 ROI-Inflation만 반영됨)
+        for t in (saving_trackers + invest_trackers + debt_trackers + asset_trackers + [extra_savings_tracker]):
+            t.apply_growth()
 
-        # 성장률 적용
-        alloc_type_map = {b: t for b, t, _ in allocations}
-        for b, t in alloc_type_map.items():
-            if t == "SAVINGS":
-                buckets[b] = buckets.get(b, 0.0) * (1.0 + saving_r_month)
-            elif t == "INVEST":
-                buckets[b] = buckets.get(b, 0.0) * (1.0 + invest_r_month)
-            elif t == "OTHER":
-                buckets[b] = buckets.get(b, 0.0)
+        # 데이터 포인트 생성
+        all_savings_schemas = [s.to_schema() for s in saving_trackers] + [extra_savings_tracker.to_schema()]
+        invest_schemas = [i.to_schema() for i in invest_trackers]
+        debt_schemas = [d.to_schema() for d in debt_trackers]
+        asset_schemas = [a.to_schema() for a in asset_trackers]
 
-        # 집계
-        total_savings = sum(buckets.get(b, 0.0) for b, t, _ in allocations if t == "SAVINGS")
-        total_invest = sum(buckets.get(b, 0.0) for b, t, _ in allocations if t == "INVEST")
-        total_other_buckets = sum(buckets.get(b, 0.0) for b, t, _ in allocations if t == "OTHER")
+        points.append(SimulationPoint(
+            month_index=(current_date.year - start_date.year) * 12 + current_date.month - 1,
+            date=current_date,
+            savings=all_savings_schemas,
+            investments=invest_schemas,
+            debts=debt_schemas,
+            assets=asset_schemas,
+            net_worth=round(
+                sum(s.amount for s in all_savings_schemas + invest_schemas + asset_schemas) - \
+                sum(d.amount for d in debt_schemas), 2
+            ),
+            net_cash_flow=round(cash_flow, 2),
+            others=0.0,
+            buckets={}
+        ))
+        current_date += relativedelta(months=1)
 
-        total_assets = total_savings + total_invest + total_other_buckets + total_assets_value
-        net_worth = total_assets - total_debt
-
-        # 1년 단위로 집계
-        if current_year not in year_to_data:
-            year_to_data[current_year] = {
-                "total_assets": total_assets,
-                "total_debts": total_debt,
-                "net_worth": net_worth,
-                "cash_like": total_savings,
-                "investments": total_invest,
-                "others": total_assets_value + total_other_buckets
-            }
-
-        # 1년 단위로 증가
-        current_date = current_date + relativedelta(years=1)
-
-    # 데이터를 1년 단위로 변환한 후 points 리스트에 추가
-    for year, data in year_to_data.items():
-        points.append(
-            SimulationPoint(
-                month_index=year,  # x축을 년도로 변경
-                date=f"{year}-01-01",  # 첫날 날짜 설정
-                total_assets=float(data["total_assets"]),
-                total_debts=float(data["total_debts"]),
-                net_worth=float(data["net_worth"]),
-                cash_like=float(data["cash_like"]),
-                investments=float(data["investments"]),
-                others=float(data["others"]),
-                buckets={}  # 1년 단위이므로 세부 버킷 정보는 생략
-            )
-        )
-    print(points)
-    # 'months' 대신 'years'로 변경
-    return SimulationResult(plan_id=req.plan_id, years=len(points), points=points)
+    return SimulationResult(plan_id=req.plan_id, years=len(points)//12, points=points)
