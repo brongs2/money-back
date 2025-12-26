@@ -29,14 +29,14 @@ async def load_user_snapshot(conn: asyncpg.Connection, user_id: int) -> dict[str
     # 3. 고정 자산 (Assets): category 추가
     assets = await conn.fetch("""
         SELECT
-            category::text AS category, -- ✅ 추가됨
-            has_loan,
+            category::text AS category,
             interest_rate::float AS interest_rate,
-            yield_rate::float    AS yield_rate,
-            purchase_amount::float AS purchase_amount,
-            current_amount::float  AS current_amount,
-            loan_amount::float     AS loan_amount,
-            repay_amount::float    AS repay_amount
+            roi::float           AS roi,       -- yield_rate 대신 roi 사용
+            dividend::float      AS dividend,  -- 추가된 dividend 반영
+            amount::float        AS amount,    -- current_amount 대신 amount 사용
+            loan_amount::float   AS loan_amount,
+            repay_amount::float  AS repay_amount,
+            currency::text       AS currency   -- 추가된 currency 반영
         FROM assets
         WHERE user_id = $1
         ORDER BY created_at DESC

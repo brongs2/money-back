@@ -59,16 +59,69 @@
 
   <!-- 자산 (Assets) -->
   <section>
-    <h2>자산 (Assets)</h2>
-    <table border="1" cellpadding="4">
-      <tr>
+  <h2>자산 (Assets)</h2>
+    <table border="1" cellpadding="8" style="width:100%; border-collapse: collapse;">
+      <tr style="background-color: #f2f2f2;">
         <th>카테고리</th>
-        <th>금액</th>
+        <th>현재 가치</th>
+        <th>ROI / 배당</th>
+        <th>연결된 대출</th> 
+        <th>월 상환액</th>
+        <th>이율</th>
       </tr>
-      {% for i in assets %}
+      {% for a in assets %}
       <tr>
-        <td>{{ i.category }}</td>
-        <td>{{ '₩{:,.0f}'.format(i.purchase_amount) }}</td>
+        <td>{{ a.category }}</td>
+        <td style="text-align: right;">{{ '₩{:,.0f}'.format(a.amount or 0) }} {{ a.currency }}</td>
+        <td style="text-align: center;">
+          <span style="color: #27ae60;">{{ a.roi or 0 }}%</span> / 
+          <span style="color: #2980b9;">{{ a.dividend or 0 }}%</span>
+        </td>
+        <td style="text-align: right;">
+          {% if a.loan_amount and a.loan_amount > 0 %}
+            {{ '₩{:,.0f}'.format(a.loan_amount) }}
+          {% else %}
+            <span style="color: #bdc3c7;">없음</span>
+          {% endif %}
+        </td>
+        <td style="text-align: center;">
+          {% if a.repay_amount and a.repay_amount > 0 %}
+            {{ '₩{:,.0f}'.format(a.repay_amount) }} 
+          {% else %}
+            -
+          {% endif %}
+        </td>
+        <td style="text-align: center;">
+            {{ a.interest_rate or 0 }}%
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="5" style="text-align: center;">등록된 자산이 없습니다.</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </section>
+
+  <section>
+    <h2>부채 (Debts)</h2>
+    <table border="1" cellpadding="8" style="width:100%; border-collapse: collapse;">
+      <tr style="background-color: #f2f2f2;">
+        <th>카테고리</th>
+        <th>대출 잔액</th>
+        <th>월 상환액</th>
+        <th>이율</th>
+      </tr>
+      {% for d in debts %}
+      <tr>
+        <td>{{ d.category }}</td>
+        <td style="text-align: right;">{{ '₩{:,.0f}'.format(d.loan_amount if d.loan_amount else 0) }}</td>
+        <td style="text-align: right;">{{ '₩{:,.0f}'.format(d.repay_amount if d.repay_amount else 0) }}</td>
+        <td style="text-align: center;">{{ d.interest_rate if d.interest_rate else 0 }}%</td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="4" style="text-align: center;">부채 내역이 없습니다.</td>
       </tr>
       {% endfor %}
     </table>

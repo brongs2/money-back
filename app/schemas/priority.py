@@ -4,7 +4,7 @@ from typing import Optional, List, Dict, Literal, Any
 from datetime import datetime
 
 # Priority 정의
-PriorityBucketType = Literal["SAVINGS", "INVEST", "SPEND", "OTHER"]
+PriorityBucketType = Literal["SAVINGS", "INVEST", "SPEND", "DEBT"]
 
 class PriorityAllocation(BaseModel):
     bucket: str = Field(..., description="예: savings, invest, fun, emergency 등 자유롭게")

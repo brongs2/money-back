@@ -19,7 +19,8 @@ from app.schemas.schemas import (
 )
 from app.schemas.schemas import PlanPriority
 from app.schemas.simulation import SimulationRequest, SimulationDefault
-from app.simulation import run_simulation
+
+from app.simulation import run_simulation, get_yearly_summary
 from app.snapshot import load_user_snapshot
 from app.auth import get_current_user, CurrentUser  # 가정
 
@@ -105,10 +106,11 @@ async def get_plan_details(
     current_user: CurrentUser = Depends(get_current_user),
     conn: asyncpg.Connection = Depends(get_db_connection),
 ):
-    # Plan 조회
+    # 1. Plan 조회
     plan = await conn.fetchrow(
         """
-        SELECT id, user_id, title, roi, dividend, inflation, description, priority,retirement_year,  expected_death_year, created_at, updated_at
+        SELECT id, user_id, title, roi, dividend, inflation, description, priority, 
+               retirement_year, expected_death_year, created_at, updated_at
         FROM plans
         WHERE user_id = $1 AND id = $2
         """,
@@ -118,44 +120,26 @@ async def get_plan_details(
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
 
-    # priority 컬럼을 사용하여 데이터 가져오기 (JSONB 형식)
-    priority = plan["priority"]  # priority 값 가져오기 (문자열 형태일 경우)
-    print(priority)
-    print(type(priority))
-
-    # 만약 priority가 문자열이라면, 이를 JSON으로 로드하여 딕셔너리로 변환
+    # 2. Priority 처리 (JSONB 대응)
+    priority = plan["priority"]
     if isinstance(priority, str):
-        priority = json.loads(priority)  # 문자열을 딕셔너리로 변환
+        priority = json.loads(priority)
+    plan_priority = PlanPriority(**priority)
 
-    # PlanPriority로 변환
-    plan_priority = PlanPriority(**priority)  # PlanPriority 객체로 변환
-
-    # 나머지 로직 처리 (revenues, expenses 등)
+    # 3. 수입/지출 조회
     revenues = await conn.fetch(
-        """
-        SELECT category, amount, frequency
-        FROM revenues
-        WHERE plan_id = $1
-        ORDER BY created_at DESC
-        """,
+        "SELECT category, amount, frequency FROM revenues WHERE plan_id = $1 ORDER BY created_at DESC",
         plan_id,
     )
-
     expenses = await conn.fetch(
-        """
-        SELECT category, amount, frequency
-        FROM expenses
-        WHERE plan_id = $1
-        ORDER BY created_at DESC
-        """,
+        "SELECT category, amount, frequency FROM expenses WHERE plan_id = $1 ORDER BY created_at DESC",
         plan_id,
     )
 
+    # 4. 시뮬레이션 실행
     snapshot = await load_user_snapshot(conn, current_user.id)
     snapshot["revenues"] = list(revenues)
     snapshot["expenses"] = list(expenses)
-
-    # 실질 수익률 계산
 
     sim_req = SimulationRequest(
         plan_id=plan["id"],
@@ -171,36 +155,33 @@ async def get_plan_details(
         expected_death_year=plan["expected_death_year"]
     )
     sim_result = run_simulation(snapshot, sim_req, start_date=date.today())
-    labels = [p.date.strftime("%Y") for p in sim_result.points]
-    total_assets = [sum(item.amount for item in p.assets) for p in sim_result.points]
-    total_savings = [sum(item.amount for item in p.savings) for p in sim_result.points]
-    total_investments = [sum(item.amount for item in p.investments) for p in sim_result.points]
-    total_debts = [sum(item.amount for item in p.debts) for p in sim_result.points]
-    net_worth = [float(p.net_worth) for p in sim_result.points]
-        # 차트용 데이터 추출
-    net_cash_flow = [float(p.net_cash_flow) for p in sim_result.points]
+
+    # ✅ 5. 연도별 집계 데이터 생성
+    summary = get_yearly_summary(sim_result)
+
+    # 6. 응답 처리 (HTML)
     if view == "html":
         return templates.TemplateResponse(
             "plan_detail.html",
             {
                 "request": request,
                 "plan": plan,
-                "revenues": revenues,
-                "expenses": expenses,
-                "labels": labels,
-                "net_worth": net_worth,
-                "net_cash_flow": net_cash_flow,
-                # ✅ HTML 템플릿에서 차트를 그리기 위해 아래 변수들이 반드시 필요합니다.
-                "total_assets": total_assets,
-                "total_savings": total_savings,
-                "total_investments": total_investments,
-                "total_debts": total_debts,
+                "revenues": list(revenues),
+                "expenses": list(expenses),
+                "labels": summary["labels"],           # 연도 리스트
+                "net_worth": summary["net_worth"],
+                "net_cash_flow": summary["net_cash_flow"],
+                "total_savings": summary["total_savings"],
+                "total_investments": summary["total_investments"],
+                "total_debts": summary["total_debts"],
+                "total_assets": summary["total_assets"],
                 "priority": plan_priority,
                 "retirement_year": plan["retirement_year"],
                 "expected_death_year": plan["expected_death_year"],
             },
         )
 
+    # 7. 응답 처리 (JSON)
     return {
         "id": plan["id"],
         "user_id": plan["user_id"],
@@ -209,21 +190,21 @@ async def get_plan_details(
         "dividend": plan["dividend"],
         "inflation": plan["inflation"],
         "description": plan["description"],
-        "priority": plan_priority,  # priority 반환
+        "priority": plan_priority,
         "created_at": plan["created_at"],
         "updated_at": plan["updated_at"],
         "revenues": list(revenues),
         "expenses": list(expenses),
-        "total_savings": total_savings,      # JSON 응답에 추가
-        "total_investments": total_investments, # JSON 응답에 추가
-        "total_debts": total_debts,          # JSON 응답에 추가
-        "total_assets": total_assets,          # JSON 응답에 추가
-        "labels": labels,
-        "net_worth": net_worth,
+        "labels": summary["labels"],
+        "net_worth": summary["net_worth"],
+        "net_cash_flow": summary["net_cash_flow"],
+        "total_savings": summary["total_savings"],
+        "total_investments": summary["total_investments"],
+        "total_debts": summary["total_debts"],
+        "total_assets": summary["total_assets"],
         "retirement_year": plan["retirement_year"],
         "expected_death_year": plan["expected_death_year"],
     }
-
 @router.patch("/{plan_id}", response_model=PlanOut)
 async def update_plan(
     plan_id: int,

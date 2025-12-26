@@ -25,6 +25,10 @@ class AssetTracker:
         self.interest = 0.0
         self.monthly_rate = _monthly_rate(annual_rate)
         self.monthly_dividend_rate = _monthly_rate(dividend_rate) # ✅ 월 배당률 변환
+    def __repr__(self):
+        total = self.principal + self.interest
+        return f"<{self.asset_type}({self.category}): 원금={self.principal:,.0f}, 잔액={total:,.0f}>"
+    
     def add_principal(self, amount: float):
         self.principal += amount
 
@@ -61,64 +65,60 @@ class AssetTracker:
 
 def run_simulation(snapshot: dict, req: SimulationRequest, start_date: date) -> SimulationResult:
     # --- [1단계: 트래커 초기화] ---
-    
-    # 저축: 개별 이율이 없으면 req.default_value.default_interest 사용
+    default_roi = f(req.default_value.default_roi)
+    default_dividend = f(req.default_value.default_dividend)
+    default_interest = f(req.default_value.default_interest)
+    inflation_rate = f(req.default_value.inflation)
+
+    # 1. 저축 트래커
     saving_trackers = [
-        AssetTracker(
-            f(r["amount"]), 
-            r.get("category", "SAVINGS"), 
-            "SAVINGS", 
-            annual_rate=f(r.get("interest_rate")) or req.default_value.default_interest
-        )
+        AssetTracker(f(r["amount"]), r.get("category", "SAVINGS"), "SAVINGS", 
+                     annual_rate=f(r.get("interest_rate")) or default_interest)
         for r in snapshot.get("savings", [])
     ]
     
-    # 개별 yield_rate가 있으면 우선하고, 없으면 플랜의 실질 수익률 사용
-    default_roi = f(req.default_value.default_roi) 
-    default_dividend = f(req.default_value.default_dividend)
-
+    # 2. 투자 트래커
     invest_trackers = [
-        AssetTracker(
-            f(r["amount"]), 
-            r.get("category", "INVEST"), 
-            "INVEST", 
-            annual_rate=f(r.get("roi")) or default_roi,
-            dividend_rate=f(r.get("dividend")) or default_dividend
-
-        )
+        AssetTracker(f(r["amount"]), r.get("category", "INVEST"), "INVEST", 
+                     annual_rate=(f(r.get("roi")) or default_roi) - inflation_rate,
+                     dividend_rate=f(r.get("dividend")) or default_dividend)
         for r in snapshot.get("investments", [])
     ]
     
-    debt_trackers = [
-        AssetTracker(
-            f(r["loan_amount"]), 
-            "DEBT", 
-            "DEBT", 
-            annual_rate=f(r.get("interest_rate")), 
-            compound=r.get("compound", "COMPOUND")
-        )
-        for r in snapshot.get("debts", [])
-    ]
+    # 3. 개별 부채 트래커 (repay_amount 정보를 함께 저장)
+    debt_trackers = []
+    for r in snapshot.get("debts", []):
+        tracker = AssetTracker(f(r["loan_amount"]), r.get("category", "DEBT"), "DEBT", 
+                              annual_rate=f(r.get("interest_rate")))
+        tracker.monthly_repay = f(r.get("repay_amount")) # 매달 고정 상환액
+        debt_trackers.append(tracker)
     
-    asset_trackers = [
-        AssetTracker(
-            f(r["current_amount"]), 
-            r.get("category", "ASSET"), 
-            "ASSET", 
-            annual_rate=f(r.get("yield_rate"))
-        )
-        for r in snapshot.get("assets", [])
-    ]
+    # 4. 고정 자산 트래커 (연결된 대출 상환액 정보 포함)
+    asset_trackers = []
+    asset_loan_trackers = [] # 자산에 딸린 대출을 별도 트래커로 관리
+    for r in snapshot.get("assets", []):
+        a_tracker = AssetTracker(f(r["amount"]), r.get("category", "ASSET"), "ASSET", 
+                                annual_rate=(f(r.get("roi")) or 0.0) - inflation_rate,
+                                dividend_rate=f(r.get("dividend")) or 0.0)
+        asset_trackers.append(a_tracker)
+        
+        # 자산에 대출이 있는 경우 부채 트래커 생성
+        loan_amt = f(r.get("loan_amount"))
+        if loan_amt > 0:
+            l_tracker = AssetTracker(loan_amt, f"{r.get('category')} 대출", "DEBT", 
+                                    annual_rate=f(r.get("interest_rate")))
+            l_tracker.monthly_repay = f(r.get("repay_amount"))
+            asset_loan_trackers.append(l_tracker)
+    # 잉여금 트래커
+    extra_savings_tracker = AssetTracker(0.0, "잉여 저축", "SAVINGS", annual_rate=default_interest)
+    extra_invest_tracker = AssetTracker(0.0, "잉여 투자", "INVEST", 
+                                        annual_rate=default_roi - inflation_rate,
+                                        dividend_rate=default_dividend)
 
-    # 시뮬레이션 중 발생하는 잉여금을 담을 트래커
-    extra_savings_tracker = AssetTracker(
-        amount=0.0, 
-        category="시뮬레이션 추가저축", 
-        asset_type="SAVINGS", 
-        annual_rate=req.default_value.default_interest
-    )
+    # 모든 부채 트래커 통합 (정렬 및 상환용)
+    all_debt_trackers = debt_trackers + asset_loan_trackers
 
-    # --- [2단계: 월간 현금흐름 계산 함수] ---
+    # --- [2단계: 월간 기본 수입/지출] ---
     def calculate_monthly(rows):
         total = 0.0
         for r in rows:
@@ -132,69 +132,125 @@ def run_simulation(snapshot: dict, req: SimulationRequest, start_date: date) -> 
 
     monthly_income = calculate_monthly(snapshot.get("revenues", []))
     monthly_spend = calculate_monthly(snapshot.get("expenses", [])) + f(req.extra_monthly_spend)
-    
-    total_repay_plan = sum(f(d["repay_amount"]) for d in snapshot.get("debts", [])) + \
-                       sum(f(a["repay_amount"]) for a in snapshot.get("assets", []) if a["has_loan"])
 
     # --- [3단계: 시뮬레이션 루프] ---
     points = []
     current_date = start_date
 
     while current_date.year <= req.expected_death_year:
+        # 1. 초기 현금 흐름 (수입 - 지출 + 배당금)
         income = monthly_income if current_date.year < req.retirement_year else 0.0
-        base_cash_flow = income - monthly_spend
-        # ✅ [추가] 모든 자산(투자, 일반자산 등)에서 발생하는 배당금 합산
-        total_dividend_cash = sum(t.get_monthly_dividend() for t in invest_trackers + asset_trackers)
-        
-        # 최종 이번 달 가용 현금
-        cash_flow = base_cash_flow + total_dividend_cash
-        
-        # --- [부채 상환 및 자산 배분 로직] ---
-        # (기존과 동일: 부채 먼저 갚고, 남으면 extra_savings에 넣고, 모자라면 자산 인출)
-        repay_needed = total_repay_plan
-        for d in debt_trackers:
-            if repay_needed <= 0 or d.principal <= 0: continue
-            payment = min(d.principal, repay_needed)
-            d.principal -= payment
-            cash_flow -= payment
-            repay_needed -= payment
+        total_dividend = sum(t.get_monthly_dividend() for t in invest_trackers + asset_trackers + [extra_invest_tracker])
+        cash_flow = income - monthly_spend + total_dividend
+        # 2. 필수 부채 상환 (repay_amount 차감)
+        # 매달 고정적으로 나가는 원리금 상환액을 현금흐름에서 먼저 뺍니다.
+        for d in all_debt_trackers:
+            if d.principal <= 0: continue
+            
+            repayment = min(d.principal, d.monthly_repay)
+            d.principal -= repayment
+            cash_flow -= repayment
 
-        if cash_flow >= 0:
-            extra_savings_tracker.add_principal(cash_flow)
+        # 시각화를 위한 순수 현금 흐름 기록 (부채 상환 후의 가용 자금)
+        available_cash = cash_flow
+        print(f"현재 날짜: {current_date}, 가용 현금: {available_cash:,.0f}")
+        for d in debt_trackers + asset_loan_trackers:
+            print(d)
+        # 3. 잉여금 배분 또는 적자 보전
+        if cash_flow > 0:
+            monthly_surplus = cash_flow
+            for alloc in req.priority.allocations:
+                amount_to_push = monthly_surplus * alloc.weight
+                
+                if alloc.type == "SAVINGS":
+                    extra_savings_tracker.add_principal(amount_to_push)
+                elif alloc.type == "INVEST":
+                    extra_invest_tracker.add_principal(amount_to_push)
+                elif alloc.type == "DEBT":
+                    # 이율 높은 순으로 추가 조기 상환 (Debt Avalanche)
+                    high_int_debts = sorted([d for d in all_debt_trackers if d.principal > 0], 
+                                          key=lambda x: x.monthly_rate, reverse=True)
+                    debt_budget = amount_to_push
+                    for d in high_int_debts:
+                        if debt_budget <= 0: break
+                        pay = min(d.principal, debt_budget)
+                        d.principal -= pay
+                        debt_budget -= pay
+                    if debt_budget > 0: # 빚 다 갚고 남은 예산은 저축으로
+                        extra_savings_tracker.add_principal(debt_budget)
+            cash_flow = 0.0
         else:
+            # 적자 발생 시 자산 인출 순서
             deficit = -cash_flow
-            for tracker in ([extra_savings_tracker] + saving_trackers + invest_trackers):
+            for tracker in ([extra_savings_tracker] + saving_trackers + [extra_invest_tracker] + invest_trackers):
                 if deficit <= 0: break
                 available = tracker.principal + tracker.interest
                 take = min(available, deficit)
                 tracker.subtract_total(take)
                 deficit -= take
 
-        # 모든 트래커 성장 적용 (성장률에는 ROI-Inflation만 반영됨)
-        for t in (saving_trackers + invest_trackers + debt_trackers + asset_trackers + [extra_savings_tracker]):
+        # 4. 가치 성장 (이자 및 ROI 적용)
+        all_trackers = saving_trackers + invest_trackers + all_debt_trackers + asset_trackers + \
+                       [extra_savings_tracker, extra_invest_tracker]
+        for t in all_trackers:
             t.apply_growth()
 
-        # 데이터 포인트 생성
-        all_savings_schemas = [s.to_schema() for s in saving_trackers] + [extra_savings_tracker.to_schema()]
-        invest_schemas = [i.to_schema() for i in invest_trackers]
-        debt_schemas = [d.to_schema() for d in debt_trackers]
-        asset_schemas = [a.to_schema() for a in asset_trackers]
+        # 5. 데이터 포인트 생성
+        savings_res = [s.to_schema() for s in saving_trackers] + [extra_savings_tracker.to_schema()]
+        invest_res = [i.to_schema() for i in invest_trackers] + [extra_invest_tracker.to_schema()]
+        debt_res = [d.to_schema() for d in all_debt_trackers]
+        asset_res = [a.to_schema() for a in asset_trackers]
 
         points.append(SimulationPoint(
             month_index=(current_date.year - start_date.year) * 12 + current_date.month - 1,
             date=current_date,
-            savings=all_savings_schemas,
-            investments=invest_schemas,
-            debts=debt_schemas,
-            assets=asset_schemas,
-            net_worth=round(
-                sum(s.amount for s in all_savings_schemas + invest_schemas + asset_schemas) - \
-                sum(d.amount for d in debt_schemas), 2
-            ),
-            net_cash_flow=round(cash_flow, 2),
+            savings=savings_res,
+            investments=invest_res,
+            debts=debt_res,
+            assets=asset_res,
+            net_worth=round(sum(s.amount for s in savings_res + invest_res + asset_res) - sum(d.amount for d in debt_res), 2),
+            net_cash_flow=round(available_cash, 2), # 가용 현금 흐름 기록
             others=0.0,
             buckets={}
         ))
         current_date += relativedelta(months=1)
 
     return SimulationResult(plan_id=req.plan_id, years=len(points)//12, points=points)
+
+def get_yearly_summary(sim_result):
+    yearly_map = {}
+    
+    for p in sim_result.points:
+        year = p.date.year
+        if year not in yearly_map:
+            yearly_map[year] = {
+                "date": str(year),
+                "net_worth": 0.0,
+                "total_savings": 0.0,
+                "total_investments": 0.0,
+                "total_debts": 0.0,
+                "total_assets": 0.0,
+                "net_cash_flow": 0.0
+            }
+        
+        # 자산 상태: 해당 연도의 마지막 데이터로 갱신 (Snapshot)
+        yearly_map[year]["net_worth"] = float(p.net_worth)
+        yearly_map[year]["total_savings"] = sum(s.amount for s in p.savings)
+        yearly_map[year]["total_investments"] = sum(i.amount for i in p.investments)
+        yearly_map[year]["total_debts"] = sum(d.amount for d in p.debts)
+        yearly_map[year]["total_assets"] = sum(a.amount for a in p.assets)
+        
+        # 현금 흐름: 해당 연도의 모든 달을 합산 (Aggregate)
+        yearly_map[year]["net_cash_flow"] += float(p.net_cash_flow)
+
+    sorted_years = sorted(yearly_map.keys())
+    
+    return {
+        "labels": [yearly_map[y]["date"] for y in sorted_years],
+        "net_worth": [yearly_map[y]["net_worth"] for y in sorted_years],
+        "total_savings": [yearly_map[y]["total_savings"] for y in sorted_years],
+        "total_investments": [yearly_map[y]["total_investments"] for y in sorted_years],
+        "total_debts": [yearly_map[y]["total_debts"] for y in sorted_years],
+        "total_assets": [yearly_map[y]["total_assets"] for y in sorted_years],
+        "net_cash_flow": [yearly_map[y]["net_cash_flow"] for y in sorted_years]
+    }

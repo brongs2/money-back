@@ -166,8 +166,11 @@
         scales: {
           x: {
             grid: { display: false },
-            ticks: { autoSkip: true, maxTicksLimit: 12 }
-          },
+            ticks: {
+                maxRotation: 0, // 연도니까 기울일 필요 없음
+                autoSkip: true  // 데이터가 적으므로 모든 연도 표시 가능
+            }
+        },
           y: { // 왼쪽 Y축 (순자산 전용)
             type: 'linear',
             display: true,
@@ -181,18 +184,18 @@
               }
             }
           },
-          y1: { // ✅ 오른쪽 Y축 (현금 흐름 전용)
+          y1: {
             type: 'linear',
-            display: true,
             position: 'right',
-            title: { display: true, text: '월 현금 흐름' },
-            grid: { drawOnChartArea: false }, // 오른쪽 축 격자는 제거하여 깔끔하게
+            title: { display: true, text: '연간 순 현금흐름' },
             ticks: {
-              callback: function(value) {
-                return (value / 10000).toLocaleString() + '만';
-              }
+                callback: function(value) {
+                    // 연간 합계이므로 단위가 커짐 -> 억원/만원 단위 적절히 섞어서 표시
+                    if (Math.abs(value) >= 100000000) return (value / 100000000).toFixed(1) + '억';
+                    return (value / 10000).toLocaleString() + '만';
+                }
             }
-          }
+        }
         }
       }
     });

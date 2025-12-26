@@ -1,211 +1,91 @@
 from fastapi import APIRouter, Depends, HTTPException
 import asyncpg
+from typing import Optional
 
 from app.db import get_db_connection
-from app.schemas.schemas import DebtCreate, DebtUpdate, DebtOut
-from app.auth import get_current_user, CurrentUser  # 가정
+from app.schemas.schemas import AssetCreate, AssetUpdate, AssetOut
+from app.auth import get_current_user, CurrentUser
 
-router = APIRouter(prefix="/debts", tags=["debts"])
+router = APIRouter(prefix="/assets", tags=["assets"])
 
+def f(v): return float(v) if v is not None else None
 
-# ========= 목록 조회 (내 debts만) =========
-@router.get("/", response_model=list[DebtOut])
-async def list_debts(
-    current_user: CurrentUser = Depends(get_current_user),
-    conn: asyncpg.Connection = Depends(get_db_connection),
-):
-    rows = await conn.fetch(
+def validate_repayment(loan_amount, interest_rate, repay_amount):
+    """상환액이 월 이자보다 큰지 검증하는 공통 로직"""
+    loan_val = f(loan_amount) or 0
+    if loan_val > 0:
+        monthly_interest = (loan_val * (f(interest_rate) / 100)) / 12
+        if f(repay_amount) < monthly_interest:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"상환액(₩{f(repay_amount):,.0f})이 월 이자(₩{monthly_interest:,.0f})보다 적어 부채가 무한히 증식합니다."
+            )
+
+async def get_assets_data(user_id: int, conn: asyncpg.Connection):
+    return await conn.fetch(
         """
-        SELECT
-            id, user_id,
-            category::text AS category,
-            loan_amount, loan_ccy::text AS loan_ccy,
-            repay_amount, repay_ccy::text AS repay_ccy,
-            interest_rate,
-            compound::text AS compound,
-            currency::text AS currency,
-            created_at, updated_at
-        FROM debts
-        WHERE user_id = $1
+        SELECT id, user_id, category::text AS category,
+               interest_rate, roi, dividend, amount, currency::text AS currency,
+               loan_amount, repay_amount, created_at, updated_at
+        FROM assets WHERE user_id = $1
         ORDER BY created_at DESC NULLS LAST, id DESC
-        """,
-        current_user.id,
+        """, user_id
     )
 
-    def f(v): return float(v) if v is not None else None
+@router.get("/", response_model=list[AssetOut])
+async def list_assets(current_user: CurrentUser = Depends(get_current_user), conn: asyncpg.Connection = Depends(get_db_connection)):
+    return await get_assets_data(current_user.id, conn)
 
-    return [
-        {
-            "id": r["id"],
-            "user_id": r["user_id"],
-            "category": r["category"],
-            "loan_amount": f(r["loan_amount"]),
-            "loan_ccy": r["loan_ccy"],
-            "repay_amount": f(r["repay_amount"]),
-            "repay_ccy": r["repay_ccy"],
-            "interest_rate": f(r["interest_rate"]),
-            "compound": r["compound"],
-            "currency": r["currency"],
-            "created_at": r["created_at"],
-            "updated_at": r["updated_at"],
-        }
-        for r in rows
-    ]
+@router.post("/", response_model=AssetOut)
+async def insert_asset(payload: AssetCreate, current_user: CurrentUser = Depends(get_current_user), conn: asyncpg.Connection = Depends(get_db_connection)):
+    if not payload.category:
+        raise HTTPException(status_code=400, detail="category is required")
 
+    # ✅ 검증 로직 실행
+    validate_repayment(payload.loan_amount, payload.interest_rate, payload.repay_amount)
 
-# ========= 생성 =========
-@router.post("/", response_model=DebtOut)
-async def insert_debt(
-    payload: DebtCreate,
-    current_user: CurrentUser = Depends(get_current_user),
-    conn: asyncpg.Connection = Depends(get_db_connection),
-):
-    # 필수값 체크
-    required = ["category", "loan_amount", "repay_amount", "interest_rate"]
-    missing = [k for k in required if getattr(payload, k, None) is None]
+    def up(v): return v.upper() if isinstance(v, str) else v
+    
+    row = await conn.fetchrow(
+        """
+        INSERT INTO assets (user_id, category, interest_rate, roi, dividend, amount, currency, loan_amount, repay_amount)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING id, user_id, category::text AS category, interest_rate, roi, dividend, amount, currency::text AS currency, loan_amount, repay_amount, created_at, updated_at
+        """,
+        current_user.id, up(payload.category), payload.interest_rate, payload.roi, payload.dividend, payload.amount, up(payload.currency), payload.loan_amount, payload.repay_amount
+    )
+    return row
 
-    if missing:
-        raise HTTPException(status_code=400, detail=f"required fields: {', '.join(missing)}")
-
-    category     = payload.category
-    compound     = payload.compound
-    currency     = payload.currency
-    loan_ccy     = payload.loan_ccy
-    repay_ccy    = payload.repay_ccy
-    loan_amount  = payload.loan_amount
-    repay_amount = payload.repay_amount
-    interest_rate = payload.interest_rate
-
-    async with conn.transaction():
-        row = await conn.fetchrow(
-            """
-            INSERT INTO debts
-                (user_id, category,
-                 loan_amount, loan_ccy,
-                 repay_amount, repay_ccy,
-                 interest_rate, compound, currency)
-            VALUES
-                ($1, $2,
-                 $3, $4,
-                 $5, $6,
-                 $7, $8, $9)
-            RETURNING
-                id, user_id,
-                category::text AS category,
-                loan_amount, loan_ccy::text AS loan_ccy,
-                repay_amount, repay_ccy::text AS repay_ccy,
-                interest_rate,
-                compound::text AS compound,
-                currency::text AS currency,
-                created_at, updated_at
-            """,
-            current_user.id,
-            category,
-            loan_amount, loan_ccy,
-            repay_amount, repay_ccy,
-            interest_rate, compound, currency,
-        )
-
-    def f(v): return float(v) if v is not None else None
-
-    return {
-        "id": row["id"],
-        "user_id": row["user_id"],
-        "category": row["category"],
-        "loan_amount": f(row["loan_amount"]),
-        "loan_ccy": row["loan_ccy"],
-        "repay_amount": f(row["repay_amount"]),
-        "repay_ccy": row["repay_ccy"],
-        "interest_rate": f(row["interest_rate"]),
-        "compound": row["compound"],
-        "currency": row["currency"],
-        "created_at": row["created_at"],
-        "updated_at": row["updated_at"],
-    }
-
-
-# ========= 부분 수정 =========
-@router.patch("/{debt_id}", response_model=DebtOut)
-async def update_debt(
-    debt_id: int,
-    payload: DebtUpdate,
-    current_user: CurrentUser = Depends(get_current_user),
-    conn: asyncpg.Connection = Depends(get_db_connection),
-):
-    mapping = {
-        "category": "category",
-        "loan_amount": "loan_amount",
-        "loan_ccy": "loan_ccy",
-        "repay_amount": "repay_amount",
-        "repay_ccy": "repay_ccy",
-        "interest_rate": "interest_rate",
-        "compound": "compound",
-        "currency": "currency",
-    }
+@router.patch("/{asset_id}", response_model=AssetOut)
+async def update_asset(asset_id: int, payload: AssetUpdate, current_user: CurrentUser = Depends(get_current_user), conn: asyncpg.Connection = Depends(get_db_connection)):
+    existing = await conn.fetchrow("SELECT loan_amount, interest_rate, repay_amount FROM assets WHERE id = $1 AND user_id = $2", asset_id, current_user.id)
+    if not existing:
+        raise HTTPException(404, "asset not found")
 
     data = payload.model_dump(exclude_unset=True)
+    
+    # ✅ 기존 값과 새 값을 합쳐서 재검증
+    new_loan = data.get("loan_amount", existing["loan_amount"])
+    new_rate = data.get("interest_rate", existing["interest_rate"])
+    new_repay = data.get("repay_amount", existing["repay_amount"])
+    validate_repayment(new_loan, new_rate, new_repay)
 
+    mapping = {"category": "category", "interest_rate": "interest_rate", "roi": "roi", "dividend": "dividend", "amount": "amount", "currency": "currency", "loan_amount": "loan_amount", "repay_amount": "repay_amount"}
     fields, vals = [], []
     for k, v in data.items():
         if k in mapping:
-            if k in {"category", "loan_ccy", "repay_ccy", "compound", "currency"} and v is not None:
-                v = str(v).upper()
+            if k in {"category", "currency"} and v is not None: v = str(v).upper()
             fields.append(f'{mapping[k]} = ${len(vals)+1}')
             vals.append(v)
 
-    if not fields:
-        raise HTTPException(status_code=400, detail="no updatable fields")
+    if not fields: raise HTTPException(400, "no updatable fields")
+    vals.extend([current_user.id, asset_id])
 
-    vals.extend([current_user.id, debt_id])
+    row = await conn.fetchrow(f"UPDATE assets SET {', '.join(fields)}, updated_at = now() WHERE user_id = ${len(vals)-1} AND id = ${len(vals)} RETURNING id, user_id, category::text AS category, interest_rate, roi, dividend, amount, currency::text AS currency, loan_amount, repay_amount, created_at, updated_at", *vals)
+    return row
 
-    q = f"""
-        UPDATE debts
-           SET {', '.join(fields)}, updated_at = now()
-         WHERE user_id = ${len(vals)-1} AND id = ${len(vals)}
-        RETURNING
-            id, user_id,
-            category::text AS category,
-            loan_amount, loan_ccy::text AS loan_ccy,
-            repay_amount, repay_ccy::text AS repay_ccy,
-            interest_rate,
-            compound::text AS compound,
-            currency::text AS currency,
-            created_at, updated_at
-    """
-    row = await conn.fetchrow(q, *vals)
-    if not row:
-        raise HTTPException(status_code=404, detail="debt not found")
-
-    def f(v): return float(v) if v is not None else None
-
-    return {
-        "id": row["id"],
-        "user_id": row["user_id"],
-        "category": row["category"],
-        "loan_amount": f(row["loan_amount"]),
-        "loan_ccy": row["loan_ccy"],
-        "repay_amount": f(row["repay_amount"]),
-        "repay_ccy": row["repay_ccy"],
-        "interest_rate": f(row["interest_rate"]),
-        "compound": row["compound"],
-        "currency": row["currency"],
-        "created_at": row["created_at"],
-        "updated_at": row["updated_at"],
-    }
-
-
-# ========= 삭제 =========
-@router.delete("/{debt_id}")
-async def delete_debt(
-    debt_id: int,
-    current_user: CurrentUser = Depends(get_current_user),
-    conn: asyncpg.Connection = Depends(get_db_connection),
-):
-    res = await conn.execute(
-        "DELETE FROM debts WHERE user_id=$1 AND id=$2",
-        current_user.id,
-        debt_id,
-    )
-    if not res.endswith(" 1"):
-        raise HTTPException(status_code=404, detail="debt not found")
-    return {"status": "ok", "deleted_id": debt_id}
+@router.delete("/{asset_id}")
+async def delete_asset(asset_id: int, current_user: CurrentUser = Depends(get_current_user), conn: asyncpg.Connection = Depends(get_db_connection)):
+    res = await conn.execute("DELETE FROM assets WHERE user_id=$1 AND id=$2", current_user.id, asset_id)
+    if not res.endswith(" 1"): raise HTTPException(404, "asset not found")
+    return {"status": "ok", "deleted_id": asset_id}
