@@ -32,13 +32,13 @@ class SimulationPoint(BaseModel):
     date: date
     net_worth: float
     net_cash_flow:float
+    repayment: float = 0.0
 
     # 공통 규격(SimulationAsset) 사용
     savings: List[SimulationAsset]
     investments: List[SimulationAsset]
     debts: List[SimulationAsset]
     assets: List[SimulationAsset]
-    others: float
 
     # ✅ 확장용: 버킷별 잔액
     buckets: Dict[str, float]

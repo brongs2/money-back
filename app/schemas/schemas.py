@@ -2,10 +2,10 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Literal, List, Any, Dict
 from datetime import date, datetime
 from app.simulation import SimulationResult
-from app.schemas.priority import PlanPriority  # PlanPriority import
-# ===== Enums (DB ENUM과 1:1 매핑, 대문자 사용 권장) =====
-Currency = Literal["KRW", "USD", "JPY", "EUR"]
-Compound = Literal["SIMPLE", "COMPOUND"]
+from app.schemas.priority import PlanPriority
+
+# ===== Enums (Currency 제거) =====
+Compound = Literal["COMPOUND", "SIMPLE"]
 Gender   = Literal["MALE", "FEMALE", "OTHER"]
 SavingType = Literal["DEPOSIT", "INSTALLMENT", "CASH", "SUBSCRIPTION"]
 InvestType = Literal["STOCK", "BOND", "ETF", "FUND", "CRYPTO"]
@@ -16,6 +16,7 @@ ExpenseType = Literal["EXPENSE"]
 TaxType     = Literal["INCOME_TAX"]
 FrequencyType = Literal["YEARLY", "MONTHLY", "WEEKLY", "DAILY"]
 PriorityBucketType = Literal["SAVINGS", "INVEST", "SPEND", "OTHER"]
+
 # ===== Users =====
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=1)
@@ -35,15 +36,19 @@ class SavingCreate(BaseModel):
     category: SavingType
     amount: float = 0
     interest_rate: Optional[float] = None
-    currency: Currency = "KRW"
-    compound: Optional[str] = None # ✅ 추가
+    compound: Optional[Compound] = "COMPOUND"
+    deposit: Optional[float] = 0.0
+    deposit_frequency: Optional[FrequencyType] = None
+    maturity_date: Optional[date] = None
 
 class SavingUpdate(BaseModel):
     category: Optional[SavingType] = None
     amount: Optional[float] = None
     interest_rate: Optional[float] = None
-    currency: Optional[Currency] = None
-    compound: Optional[str] = None # ✅ 추가
+    compound: Optional[Compound] = None
+    deposit: Optional[float] = None
+    deposit_frequency: Optional[FrequencyType] = None
+    maturity_date: Optional[date] = None
 
 class SavingOut(BaseModel):
     id: int
@@ -51,8 +56,10 @@ class SavingOut(BaseModel):
     category: SavingType
     amount: float
     interest_rate: Optional[float]
-    currency: Currency
-    compound: Optional[str] = None # ✅ 추가
+    compound: Optional[Compound] = None
+    deposit: Optional[float] = 0.0
+    deposit_frequency: Optional[FrequencyType] = None
+    maturity_date: Optional[date] = None
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
 
@@ -61,15 +68,19 @@ class InvestmentCreate(BaseModel):
     category: InvestType
     amount: float = 0
     roi: Optional[float] = None
-    dividend: Optional[float] = None
-    currency: Currency = "KRW"
+    dividend: Optional[float] = 0.0
+    deposit: Optional[float] = 0.0
+    deposit_frequency: Optional[FrequencyType] = None
+    maturity_date: Optional[date] = None
 
 class InvestmentUpdate(BaseModel):
     category: Optional[InvestType] = None
     amount: Optional[float] = None
     roi: Optional[float] = None
     dividend: Optional[float] = None
-    currency: Optional[Currency] = None
+    deposit: Optional[float] = None
+    deposit_frequency: Optional[FrequencyType] = None
+    maturity_date: Optional[date] = None
 
 class InvestmentOut(BaseModel):
     id: int
@@ -78,195 +89,165 @@ class InvestmentOut(BaseModel):
     amount: float
     roi: Optional[float]
     dividend: Optional[float]
-    currency: Currency
+    deposit: Optional[float] = 0.0
+    deposit_frequency: Optional[FrequencyType] = None
+    maturity_date: Optional[date] = None
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
 
-# ===== Assets =====
+# ===== Assets (DB 컬럼 구조에 맞게 최적화) =====
 class AssetCreate(BaseModel):
     category: AssetType
-    has_loan: bool = False
-    interest_rate: Optional[float] = None
-    yield_rate: Optional[float] = None
-    purchase_amount: Optional[float] = None
-    purchase_ccy: Optional[Currency] = None
-    current_amount: Optional[float] = None
-    current_ccy: Optional[Currency] = None
-    loan_amount: Optional[float] = None
-    loan_ccy: Optional[Currency] = None
-    repay_amount: Optional[float] = None
-    repay_ccy: Optional[Currency] = None
+    interest_rate: Optional[float] = 0.0  # 대출 이율
+    roi: Optional[float] = 0.0            # 자산 상승률
+    dividend: Optional[float] = 0.0       # 배당/임대 수익률 (추가)
+    amount: float = 0.0                   # 자산 가치 (purchase/current 통합)
+    loan_amount: Optional[float] = 0.0    # 대출 원금
+    repay_amount: Optional[float] = 0.0   # 월 상환액
 
 class AssetUpdate(BaseModel):
     category: Optional[AssetType] = None
-    has_loan: Optional[bool] = None
     interest_rate: Optional[float] = None
-    yield_rate: Optional[float] = None
-    purchase_amount: Optional[float] = None
-    purchase_ccy: Optional[Currency] = None
-    current_amount: Optional[float] = None
-    current_ccy: Optional[Currency] = None
+    roi: Optional[float] = None
+    dividend: Optional[float] = None
+    amount: Optional[float] = None
     loan_amount: Optional[float] = None
-    loan_ccy: Optional[Currency] = None
     repay_amount: Optional[float] = None
-    repay_ccy: Optional[Currency] = None
 
 class AssetOut(BaseModel):
     id: int
     user_id: int
     category: AssetType
-    has_loan: bool
     interest_rate: Optional[float]
-    yield_rate: Optional[float]
-    purchase_amount: Optional[float]
-    purchase_ccy: Optional[Currency]
-    current_amount: Optional[float]
-    current_ccy: Optional[Currency]
+    roi: Optional[float]
+    dividend: Optional[float]
+    amount: float
     loan_amount: Optional[float]
-    loan_ccy: Optional[Currency]
     repay_amount: Optional[float]
-    repay_ccy: Optional[Currency]
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
 
-# ===== Debts =====
+# ===== Debts (Currency 필드 전체 제거) =====
 class DebtCreate(BaseModel):
     category: DebtType
     loan_amount: float
-    loan_ccy: Optional[Currency] = "KRW"
     repay_amount: float
-    repay_ccy: Optional[Currency] = "KRW"
     interest_rate: float
     compound: Optional[Compound] = "COMPOUND"
-    currency: Optional[Currency] = "KRW"
 
 class DebtUpdate(BaseModel):
     category: Optional[DebtType] = None
     loan_amount: Optional[float] = None
-    loan_ccy: Optional[Currency] = None
     repay_amount: Optional[float] = None
-    repay_ccy: Optional[Currency] = None
     interest_rate: Optional[float] = None
     compound: Optional[Compound] = None
-    currency: Optional[Currency] = None
 
 class DebtOut(BaseModel):
     id: int
     user_id: int
     category: DebtType
     loan_amount: float
-    loan_ccy: Optional[Currency]
     repay_amount: float
-    repay_ccy: Optional[Currency]
     interest_rate: float
     compound: Compound
-    currency: Currency
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
 
-
-
-
-# ===== Revenues (plan에 종속) =====
+# ===== Revenues (start_date, end_date 추가) =====
 class RevenueCreate(BaseModel):
     plan_id: int
     category: RevenueType
     amount: float
-    currency: Currency = "KRW"
     frequency: FrequencyType
-    time_range: Optional[str] = None # 예: "2024-01 ~ 2024-12"
+    start_date: Optional[date] = Field(None, description="수입 시작일")
+    end_date: Optional[date] = Field(None, description="수입 종료일")
 
 class RevenueUpdate(BaseModel):
     category: Optional[RevenueType] = None
     amount: Optional[float] = None
-    currency: Optional[Currency] = None
-    frequency: FrequencyType
-    time_range: Optional[str] = None
+    frequency: Optional[FrequencyType] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
 
 class RevenueOut(BaseModel):
     id: int
     plan_id: int
     category: RevenueType
     amount: float
-    currency: Currency
     frequency: FrequencyType
-    time_range: Optional[str]
+    start_date: Optional[date]
+    end_date: Optional[date]
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
 
 
-# ===== Revenues (plan에 종속) =====
+# ===== Expenses (start_date, end_date 추가) =====
 class ExpenseCreate(BaseModel):
     plan_id: int
     category: ExpenseType
     amount: float
-    currency: Currency = "KRW"
     frequency: FrequencyType
-    time_range: Optional[str] = None # 예: "2024-01 ~ 2024-12"
+    start_date: Optional[date] = Field(None, description="지출 시작일")
+    end_date: Optional[date] = Field(None, description="지출 종료일")
 
 class ExpenseUpdate(BaseModel):
     category: Optional[ExpenseType] = None
     amount: Optional[float] = None
-    currency: Optional[Currency] = None
-    frequency: FrequencyType
-    time_range: Optional[str] = None
+    frequency: Optional[FrequencyType] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
 
 class ExpenseOut(BaseModel):
     id: int
     plan_id: int
     category: ExpenseType
     amount: float
-    currency: Currency
     frequency: FrequencyType
-    time_range: Optional[str]
+    start_date: Optional[date]
+    end_date: Optional[date]
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
-# ===== Taxes (plan에 종속) =====
+# ===== Taxes =====
+
 class TaxCreate(BaseModel):
-    plan_id: int
     category: TaxType
+    rate: float = 0.0          # 세금 비율 (%)
+    frequency: FrequencyType = "YEARLY"  # 기본값 연 단위로 설정
 
 class TaxUpdate(BaseModel):
     category: Optional[TaxType] = None
+    rate: Optional[float] = None
+    frequency: Optional[FrequencyType] = None
 
 class TaxOut(BaseModel):
     id: int
     plan_id: int
     category: TaxType
+    rate: float
+    frequency: FrequencyType
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
 
-
-# =========================
-# Plan Schemas
-# =========================
-
+# ===== Plans =====
 class PlanCreate(BaseModel):
     title: str
     description: Optional[str] = None
-
-    # 이미 추가했다고 한 필드들
-    roi: Optional[float] = None          # % 값(예: 7.5)
-    dividend: Optional[float] = None     # % 값
-    inflation: Optional[float] = None    # % 값
+    roi: Optional[float] = None
+    dividend: Optional[float] = None
+    inflation: Optional[float] = None
     retirement_year: int
-    expected_death_year :int
-    # ✅ 추가
-    priority: Optional[PlanPriority] = None  # 여기서 Priority를 사용
-
+    expected_death_year: int
+    priority: Optional[PlanPriority] = None
 
 class PlanUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
-    retirement_year: int
-    expected_death_year :int
+    retirement_year: Optional[int] = None       # 필수 해제
+    expected_death_year: Optional[int] = None   # 필수 해제
     roi: Optional[float] = None
     dividend: Optional[float] = None
     inflation: Optional[float] = None
-
-    # ✅ 추가
     priority: Optional[PlanPriority] = None
-
 
 class PlanOut(BaseModel):
     id: int
@@ -274,13 +255,10 @@ class PlanOut(BaseModel):
     title: str
     description: Optional[str] = None
     retirement_year: int
-    expected_death_year :int
+    expected_death_year: int
     roi: Optional[float] = None
     dividend: Optional[float] = None
     inflation: Optional[float] = None
-
-    # ✅ 추가
-    priority: Optional[PlanPriority] = None  # 반환 시 PlanPriority 포함
-
+    priority: Optional[PlanPriority] = None
     created_at: datetime
     updated_at: datetime

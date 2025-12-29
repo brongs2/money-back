@@ -1,14 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
 import asyncpg
-
+from datetime import date
 from app.db import get_db_connection
 from app.schemas.schemas import InvestmentCreate, InvestmentUpdate, InvestmentOut
-from app.auth import get_current_user, CurrentUser  # 가정
+from app.auth import get_current_user, CurrentUser
 
 router = APIRouter(prefix="/investments", tags=["investments"])
 
-
-# ===== 목록 조회 (내 investments만) =====
+# ===== 목록 조회 =====
 @router.get("/", response_model=list[InvestmentOut])
 async def list_investments(
     current_user: CurrentUser = Depends(get_current_user),
@@ -23,7 +22,9 @@ async def list_investments(
             amount,
             roi,
             dividend,
-            currency::text AS currency,
+            deposit,                         -- ✅ 추가
+            deposit_frequency::text AS deposit_frequency, -- ✅ 추가
+            maturity_date,                   -- ✅ 추가
             created_at,
             updated_at
         FROM investments
@@ -35,15 +36,13 @@ async def list_investments(
 
     return [
         {
-            "id": r["id"],
-            "user_id": r["user_id"],
-            "category": r["category"],
+            **dict(r),
             "amount": float(r["amount"]) if r["amount"] is not None else 0.0,
             "roi": float(r["roi"]) if r["roi"] is not None else None,
             "dividend": float(r["dividend"]) if r["dividend"] is not None else None,
-            "currency": r["currency"],
-            "created_at": r["created_at"],
-            "updated_at": r["updated_at"],
+            "deposit": float(r["deposit"]) if r["deposit"] is not None else 0.0,
+            "deposit_frequency": r["deposit_frequency"],
+            "maturity_date": r["maturity_date"],
         }
         for r in rows
     ]
@@ -59,48 +58,43 @@ async def insert_investment(
     if payload.category is None:
         raise HTTPException(400, "category is required")
 
-    category   = payload.category
-    currency   = payload.currency
-    amount     = payload.amount
-    roi = payload.roi
-    dividend = payload.dividend
-
     async with conn.transaction():
         row = await conn.fetchrow(
             """
             INSERT INTO investments
-                (user_id, category, amount, roi, currency)
+                (user_id, category, amount, roi, dividend, 
+                 deposit, deposit_frequency, maturity_date) -- ✅ currency 제외, 필드 추가
             VALUES
-                ($1,      $2,       $3,   COALESCE($4,0), $5)
+                ($1, $2, $3, COALESCE($4, 0), COALESCE($5, 0), $6, $7, $8)
             RETURNING
                 id,
                 user_id,
                 category::text AS category,
                 amount,
                 roi,
-                currency::text AS currency,
                 dividend,
+                deposit,
+                deposit_frequency::text AS deposit_frequency,
+                maturity_date,
                 created_at,
                 updated_at
             """,
             current_user.id,
-            category,
-            amount,
-            roi,
-            currency,
-            dividend,
+            payload.category.upper(),
+            payload.amount,
+            payload.roi,
+            payload.dividend,
+            payload.deposit,
+            payload.deposit_frequency.upper() if payload.deposit_frequency else None,
+            payload.maturity_date,
         )
 
     return {
-        "id": row["id"],
-        "user_id": row["user_id"],
-        "category": row["category"],
-        "amount": float(row["amount"]) if row["amount"] is not None else 0.0,
-        "roi": float(row["roi"]) if row["roi"] is not None else None,
-        "dividend": float(row["dividend"]) if row["dividend"] is not None else None,
-        "currency": row["currency"],
-        "created_at": row["created_at"],
-        "updated_at": row["updated_at"],
+        **dict(row),
+        "amount": float(row["amount"]),
+        "roi": float(row["roi"]),
+        "dividend": float(row["dividend"]),
+        "deposit": float(row["deposit"]),
     }
 
 
@@ -112,23 +106,25 @@ async def update_investment(
     current_user: CurrentUser = Depends(get_current_user),
     conn: asyncpg.Connection = Depends(get_db_connection),
 ):
-    # Pydantic v2 기준: model_dump(exclude_unset=True)
     data = payload.model_dump(exclude_unset=True)
 
     fields = []
-    vals: list = []
+    vals = []
 
+    # mapping에서 currency 제거, 새 필드 추가
     mapping = {
         "category": "category",
         "amount": "amount",
         "roi": "roi",
-        "currency": "currency",
         "dividend": "dividend",
+        "deposit": "deposit",
+        "deposit_frequency": "deposit_frequency",
+        "maturity_date": "maturity_date",
     }
 
     for k, v in data.items():
         if k in mapping:
-            if k in {"category", "currency"} and v is not None:
+            if k in {"category", "deposit_frequency"} and v is not None:
                 v = str(v).upper()
             fields.append(f'{mapping[k]} = ${len(vals) + 1}')
             vals.append(v)
@@ -136,7 +132,6 @@ async def update_investment(
     if not fields:
         raise HTTPException(400, "no updatable fields")
 
-    # user_id, investment_id 조건 붙이기
     vals.extend([current_user.id, investment_id])
 
     q = f"""
@@ -150,7 +145,9 @@ async def update_investment(
             amount,
             roi,
             dividend,
-            currency::text AS currency,
+            deposit,
+            deposit_frequency::text AS deposit_frequency,
+            maturity_date,
             created_at,
             updated_at
     """
@@ -161,10 +158,11 @@ async def update_investment(
 
     return {
         **dict(row),
-        "amount": float(row["amount"]) if row["amount"] is not None else 0.0,
-        "roi": float(row["roi"]) if row["roi"] is not None else None,
+        "amount": float(row["amount"]),
+        "roi": float(row["roi"]),
+        "dividend": float(row["dividend"]),
+        "deposit": float(row["deposit"]),
     }
-
 
 # ===== 삭제 =====
 @router.delete("/{investment_id}")

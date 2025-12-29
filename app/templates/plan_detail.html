@@ -3,206 +3,193 @@
 <head>
   <meta charset="UTF-8" />
   <title>{{ plan.title }} - 플랜 상세</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    body { font-family: sans-serif; line-height: 1.4; margin: 10px; padding: 0; }
+    h1 { margin: 5px 0; font-size: 1.5em; }
+    h2, h3 { margin: 5px 0; font-size: 1.2em; }
+    p { margin: 2px 0; }
+    section { margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 5px; font-size: 0.85em; }
+    th, td { border: 1px solid #ccc; padding: 4px; text-align: left; }
+    th { background-color: #f2f2f2; }
+    .summary-box { background: #f9f9f9; padding: 10px; border-radius: 5px; margin-bottom: 10px; }
+    canvas { max-height: 350px; } 
+    .chart-container { position: relative; height: 350px; width: 100%; }
+  </style>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
   <h1>플랜 상세</h1>
 
-  <!-- 플랜 정보 -->
-  <section>
+  <section class="summary-box">
     <h2>{{ plan.title }}</h2>
-    {% if plan.description %}
-      <p>{{ plan.description }}</p>
-    {% endif %}
+    {% if plan.description %}<p>{{ plan.description }}</p>{% endif %}
     {% if plan.roi is not none %}
-      <p>roi: {{ plan.roi }}% dividend: {{ plan.dividend }}% inflation: {{ plan.inflation }}%</p>
-      <p>retirement_year : {{ plan.retirement_year }}</p>
-      <p>expected_death_year : {{ plan.expected_death_year }}</p>
+      <p>roi: {{ plan.roi| round(2) }}% | 금리: {{ interest_rate }}% | 배당/임대수익률: {{ plan.dividend }}%</p>
+      <p>은퇴: {{ plan.retirement_year }}년 | 기대수명: {{ plan.expected_death_year }}년</p>
     {% endif %}
   </section>
 
-  <!-- 수입 -->
   <section>
-    <h3>수입 (Revenues)</h3>
-    <table border="1" cellpadding="4">
-      <tr>
-        <th>카테고리</th>
-        <th>금액</th>
-        <th>빈도</th>
-      </tr>
-      {% for revenue in revenues %}
-      <tr>
-        <td>{{ revenue.category }}</td>
-        <td>{{ '₩{:,.0f}'.format(revenue.amount) }}</td>
-        <td>{{ revenue.frequency }}</td>
-      </tr>
-      {% else %}
-      <tr>
-        <td colspan="3">수입이 없습니다.</td>
-      </tr>
-      {% endfor %}
+    <h3>Tax (설정된 세율)</h3>
+    <table>
+      <thead>
+        <tr><th>카테고리</th><th>세율(%)</th><th>주기</th></tr>
+      </thead>
+      <tbody>
+        {% for tax in taxes_input %}
+        <tr>
+          <td>{{ tax.category }}</td>
+          <td>{{ tax.rate }}%</td>
+          <td>{{ tax.frequency }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3">설정된 세금 정보가 없습니다.</td></tr>
+        {% endfor %}
+      </tbody>
     </table>
   </section>
 
-  <!-- 소비 -->
   <section>
-    <h3>소비 (Expenses)</h3>
-    <table border="1" cellpadding="4">
-      <tr>
-        <th>카테고리</th>
-        <th>금액</th>
-        <th>빈도</th>
-      </tr>
-      {% for expense in expenses %}
-      <tr>
-        <td>{{ expense.category }}</td>
-        <td>{{ '₩{:,.0f}'.format(expense.amount) }}</td>
-        <td>{{ expense.frequency }}</td>
-      </tr>
-      {% else %}
-      <tr>
-        <td colspan="3">소비 내역이 없습니다.</td>
-      </tr>
-      {% endfor %}
+    <h3>Revenue</h3>
+    <table>
+      <thead>
+        <tr><th>카테고리</th><th>금액</th><th>빈도</th><th>시작</th><th>종료</th></tr>
+      </thead>
+      <tbody>
+        {% for revenue in revenues %}
+        <tr>
+          <td>{{ revenue.category }}</td>
+          <td>{{ '₩{:,.0f}'.format(revenue.amount) }}</td>
+          <td>{{ revenue.frequency }}</td>
+          <td>{{ revenue.start_date if revenue.start_date else '-' }}</td>
+          <td>{{ revenue.end_date if revenue.end_date else '종료 시까지' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
     </table>
   </section>
+
+  <section>
+    <h3>Expense</h3>
+    <table>
+      <thead>
+        <tr><th>카테고리</th><th>금액</th><th>빈도</th><th>시작</th><th>종료</th></tr>
+      </thead>
+      <tbody>
+        {% for expense in expenses %}
+        <tr>
+          <td>{{ expense.category }}</td>
+          <td>{{ '₩{:,.0f}'.format(expense.amount) }}</td>
+          <td>{{ expense.frequency }}</td>
+          <td>{{ expense.start_date if expense.start_date else '-' }}</td>
+          <td>{{ expense.end_date if expense.end_date else '종료 시까지' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
   <section>
     <h3>우선순위 (Priority)</h3>
-    <table border="1" cellpadding="4">
-      <tr>
-        <th>카테고리</th>
-        <th>비율</th>
-      </tr>
+    <table>
+      <tr><th>카테고리</th><th>비율</th></tr>
       {% for p in priority.allocations %}
-      <tr>
-        <td>{{ p.bucket }}</td>  <!-- bucket 이름 -->
-        <td>{{ p.weight * 100 }}%</td>  <!-- 비율을 백분율로 표시 -->
-      </tr>
-      {% else %}
-      <tr>
-        <td colspan="2">우선순위가 설정되지 않았습니다.</td>
-      </tr>
-      {% endfor %}
+      <tr><td>{{ p.bucket }}</td><td>{{ p.weight * 100 }}%</td></tr>
+      {% else %}<tr><td colspan="2">우선순위가 설정되지 않았습니다.</td></tr>{% endfor %}
     </table>
-</section>
+  </section>
 
-  <!-- 시뮬레이션 결과 -->
   <section>
-    <h3>시뮬레이션 결과 (순자산 변화)</h3>
-    <canvas id="simulationChart" width="600" height="300"></canvas>
+    <h3>시뮬레이션 결과 (연간 추이)</h3>
+    <div class="chart-container">
+        <canvas id="simulationChart"></canvas>
+    </div>
   </section>
 
   <script>
-    // 1. 데이터 수신 (netCashFlow 추가)
-    const labels = {{ labels | tojson if labels is defined else '[]' }};
-    const netWorth = {{ net_worth | tojson if net_worth is defined else '[]' }};
-    const totalSavings = {{ total_savings | tojson if total_savings is defined else '[]' }};
-    const totalInvestments = {{ total_investments | tojson if total_investments is defined else '[]' }};
-    const totalDebts = {{ total_debts | tojson if total_debts is defined else '[]' }};
-    const netCashFlow = {{ net_cash_flow | tojson if net_cash_flow is defined else '[]' }}; // ✅ 추가
+    const labels = {{ labels | tojson }};
+    const netWorth = {{ net_worth | tojson }};
+    const netCashFlow = {{ net_cash_flow | tojson }};
+    const totalRepayment = {{ total_repayment | tojson }};
+    
+    const totalSavings = {{ total_savings | tojson }};
+    const totalInvestments = {{ total_investments | tojson }};
+    const totalAssets = {{ total_assets | tojson }};
+    const totalDebts = {{ total_debts | tojson }};
+    
+    const totalIncome = {{ total_income | tojson if total_income is defined else '[]' }};
+    const totalSpend = {{ total_spend | tojson if total_spend is defined else '[]' }};
+    const totalDividend = {{ total_dividend | tojson if total_dividend is defined else '[]' }};
+    const totalDeposit = {{ total_deposit | tojson if total_deposit is defined else '[]' }};
+    // ✅ 백엔드에서 넘겨준 total_tax 리스트 로드
+    const totalTax = {{ total_tax | tojson if total_tax is defined else '[]' }};
 
     const ctx = document.getElementById('simulationChart').getContext('2d');
-    
     new Chart(ctx, {
-      data: { // ✅ 콤보 차트를 위해 type을 datasets 내부로 이동
+      data: {
         labels: labels,
         datasets: [
           {
-            type: 'line', // ✅ 순자산은 선 그래프
-            label: '순자산 (Net Worth)',
+            type: 'line',
+            label: '순자산',
             data: netWorth,
             borderColor: 'rgba(75, 192, 192, 1)',
             backgroundColor: 'rgba(75, 192, 192, 0.1)',
             fill: true,
-            borderWidth: 3,
-            tension: 0.1,
-            pointRadius: 0, // 선을 더 깔끔하게
-            yAxisID: 'y'    // 왼쪽 Y축 사용
-          },
-          {
-            type: 'bar', // ✅ 현금 흐름은 막대 그래프
-            label: '월 현금 흐름 (Cash Flow)',
-            data: netCashFlow,
-            yAxisID: 'y1', // 오른쪽 Y축 사용
-            backgroundColor: netCashFlow.map(v => v >= 0 ? 'rgba(54, 162, 235, 0.5)' : 'rgba(255, 99, 132, 0.5)'),
-            borderColor: netCashFlow.map(v => v >= 0 ? 'rgba(54, 162, 235, 1)' : 'rgba(255, 99, 132, 1)'),
-            borderWidth: 1
+            yAxisID: 'y',
+            pointRadius: 2,
+            pointHoverRadius: 5,
+            borderWidth: 3
           }
         ]
       },
       options: {
         responsive: true,
-        interaction: {
-          mode: 'index',
-          intersect: false,
-        },
+        maintainAspectRatio: false,
         plugins: {
           tooltip: {
+            mode: 'index',
+            intersect: false,
             callbacks: {
-              title: function(context) {
-                return context[0].label + ' 상세 내역';
-              },
               label: function(context) {
-                const index = context.dataIndex;
+                const i = context.dataIndex;
                 const fmt = (v) => '₩' + Math.round(v || 0).toLocaleString();
                 
-                // 툴팁에 모든 정보를 모아서 표시
-                if (context.datasetIndex === 0) { // 첫 번째 데이터셋(순자산)일 때만 합쳐서 표시
-                  return [
-                    `순자산: ${fmt(netWorth[index])}`,
-                    `현금흐름: ${fmt(netCashFlow[index])}`, // ✅ 현금흐름 추가
-                    `저축합계: ${fmt(totalSavings[index])}`,
-                    `투자합계: ${fmt(totalInvestments[index])}`,
-                    `부채합계: ${fmt(totalDebts[index])}`
-                  ];
-                }
-                return null; // 막대 그래프 툴팁 중복 방지
+                return [
+                  `[자산 가치]`,
+                  `순자산: ${fmt(netWorth[i])}`,
+                  `-------------------`,
+                  `[자산 상세]`,
+                  ` - 저축: ${fmt(totalSavings[i])}`,
+                  ` - 투자: ${fmt(totalInvestments[i])}`,
+                  ` - 부동산/고정자산: ${fmt(totalAssets[i])}`,
+                  ` - 부채잔액: ${fmt(totalDebts[i])}`,
+                  `-------------------`,
+                  `[연간 현금 흐름]`,
+                  `총 수입 (+): ${fmt(totalIncome[i])}`,
+                  `배당 수익 (+): ${fmt(totalDividend[i])}`,
+                  `생활비 지출 (-): ${fmt(totalSpend[i])}`,
+                  `납부 세금 (-): ${fmt(totalTax[i])}`, // ✅ 툴팁에 세금 추가
+                  `목표 저축액 (-): ${fmt(totalDeposit[i])}`,
+                  `원리금 상환 (-): ${fmt(totalRepayment[i])}`,
+                  `-------------------`,
+                  `최종 현금흐름: ${fmt(netCashFlow[i])}`
+                ];
               }
             }
           }
         },
         scales: {
-          x: {
-            grid: { display: false },
-            ticks: {
-                maxRotation: 0, // 연도니까 기울일 필요 없음
-                autoSkip: true  // 데이터가 적으므로 모든 연도 표시 가능
-            }
-        },
-          y: { // 왼쪽 Y축 (순자산 전용)
-            type: 'linear',
-            display: true,
+          y: { 
             position: 'left',
-            title: { display: true, text: '순자산 규모' },
-            ticks: {
-              callback: function(value) {
-                if (value >= 100000000) return (value / 100000000).toFixed(1) + '억원';
-                if (value >= 10000) return (value / 10000).toLocaleString() + '만원';
-                return value.toLocaleString() + '원';
-              }
-            }
+            title: { display: true, text: '순자산' },
+            ticks: { callback: v => v >= 100000000 ? (v/100000000).toFixed(1)+'억' : (v/10000).toLocaleString()+'만' }
           },
-          y1: {
-            type: 'linear',
-            position: 'right',
-            title: { display: true, text: '연간 순 현금흐름' },
-            ticks: {
-                callback: function(value) {
-                    // 연간 합계이므로 단위가 커짐 -> 억원/만원 단위 적절히 섞어서 표시
-                    if (Math.abs(value) >= 100000000) return (value / 100000000).toFixed(1) + '억';
-                    return (value / 10000).toLocaleString() + '만';
-                }
-            }
-        }
         }
       }
     });
   </script>
-  <p>
-    <a href="/">← 대시보드로 돌아가기</a>
-  </p>
-
 </body>
 </html>
